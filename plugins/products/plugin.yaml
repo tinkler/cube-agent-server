@@ -1,0 +1,55 @@
+# ============================================================
+# Plugin: products
+# 用途:   AI skill 生成
+# 数据源: erp
+# 生成:   2026-08-18T19:10:12+08:00 by AI skill v0.1
+# 业务:   从 erp 库的 products 表生成 cube:每个商品有 id / barcode / 条码 / 商品名 / 盘点数量(数字) / 盘点金额(数字) / 主供应商id / 主供应商名称 / 来源 sheet。measures 给一个 count,dimensions 全字段按类型映射
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: products
+  version: 0.1.0
+  description: AI skill 生成
+  datasource: erp
+  owner: ai-skill
+  generated_by: skill
+  tags: [ai-generated]
+
+spec:
+  cubes:
+    - name: products
+      sql: "SELECT * FROM products"
+      description: AI skill 生成
+      primary_key: id
+      measures:
+                - name: qty
+                  type: sum
+                  sql: qty
+                - name: amount
+                  type: sum
+                  sql: amount
+      dimensions:
+              - name: id
+                sql: id
+                type: string
+              - name: row_no
+                sql: row_no
+                type: string
+              - name: barcode
+                sql: barcode
+                type: string
+              - name: name
+                sql: name
+                type: string
+              - name: main_supp_id
+                sql: main_supp_id
+                type: string
+              - name: main_supp_name
+                sql: main_supp_name
+                type: string
+              - name: src_sheet
+                sql: src_sheet
+                type: string
+      segments:

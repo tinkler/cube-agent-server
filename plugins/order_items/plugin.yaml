@@ -1,0 +1,43 @@
+# ============================================================
+# Plugin: order_items
+# 用途:   AI skill 生成
+# 数据源: demo
+# 生成:   2026-08-17T00:55:37+08:00 by AI skill v0.1
+# 业务:   ??????
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: order_items
+  version: 0.1.0
+  description: AI skill 生成
+  datasource: demo
+  owner: ai-skill
+  generated_by: skill
+  tags: [ai-generated]
+
+spec:
+  cubes:
+    - name: order_items
+      sql: "SELECT * FROM order_items"
+      description: AI skill 生成
+      primary_key: id
+      measures:
+                - name: order_id
+                  type: sum
+                  sql: order_id
+                - name: product_id
+                  type: sum
+                  sql: product_id
+                - name: quantity
+                  type: sum
+                  sql: quantity
+                - name: unit_price
+                  type: sum
+                  sql: unit_price
+      dimensions:
+              - name: id
+                sql: id
+                type: string
+      segments:

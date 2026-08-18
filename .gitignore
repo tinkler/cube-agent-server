@@ -1,0 +1,49 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Env / Secrets
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache (AI skill 元数据缓存)
+.cache/
+
+# Runtime data (logs, sqlite db)
+data/
+
+# Plugin backups
+plugins/*/*.bak
+plugins/*/*.bak.*
+
+# Local config overrides
+config/*.local.yaml
+config/*.local.yml
+/testdata
+logs
+tmp_*.json

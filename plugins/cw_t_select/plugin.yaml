@@ -1,0 +1,55 @@
+# ============================================================
+# Plugin: cw_t_select
+# 用途:   AI skill 生成
+# 数据源: hbpos
+# 生成:   2026-08-18T19:40:50+08:00 by AI skill v0.1
+# 业务:   用 dbo.t_bd_item_info 商品主表建 cube
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: cw_t_select
+  version: 0.1.0
+  description: AI skill 生成
+  datasource: hbpos
+  owner: ai-skill
+  generated_by: skill
+  tags: [ai-generated]
+
+spec:
+  cubes:
+    - name: cw_t_select
+      sql: "SELECT * FROM cw_t_select"
+      description: AI skill 生成
+      primary_key: trans_no
+      measures:
+                - name: tab_order
+                  type: sum
+                  sql: tab_order
+      dimensions:
+              - name: trans_no
+                sql: trans_no
+                type: string
+              - name: db_no
+                sql: db_no
+                type: string
+              - name: item_code
+                sql: item_code
+                type: string
+              - name: item_desc
+                sql: item_desc
+                type: string
+              - name: select_flag
+                sql: select_flag
+                type: string
+              - name: title
+                sql: title
+                type: string
+              - name: item_value
+                sql: item_value
+                type: string
+              - name: change_flag
+                sql: change_flag
+                type: string
+      segments:

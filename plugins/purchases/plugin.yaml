@@ -1,0 +1,122 @@
+# ============================================================
+# Plugin: purchases
+# 用途:   HB POS v10 采购入库流水(JOIN 商品主表,带真实成本价 cost_price)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-18 第 2 轮 review 重构
+# 业务:   t_im_flow WHERE sale_way='A' (入库) + t_bd_item_info LEFT JOIN
+#        支持 AI 查:某商品/分类/供应商 的 每日/每月 采购量/采购成本/采购税额
+#        + 与 sales cube 配合,实现"真实成本 vs 售价"对比
+# 统计实践:
+#   - 时间维度用 raw datetime(oper_date, type=time),让 AI 用 dateRange + granularity
+#   - pre-aggregate total_cost = real_qty * cost_price(sum(col1*col2) 不支持)
+#   - RTRIM 解决 SQL Server CHAR 字段尾随空格
+#   - WHERE 限制最近 1 年(147 万行全表 GROUP BY 太慢)
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: purchases
+  version: 0.2.0
+  description: HB POS v10 采购入库流水(J 商品主表:分类/供应商/品牌)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, purchase, daily, time-series]
+
+spec:
+  cubes:
+    - name: purchases
+      # denormalized view:入库流水 + 商品主表
+      # sale_way = 'A' 是入库('B'/'C' 是其他/出库,不计入采购)
+      # total_cost = real_qty * cost_price 提前算(成本价 × 入库量)
+      # total_purchase_tax / sheet_amt / cost_difference 直接来自原表
+      sql: |
+        SELECT
+          f.flow_id,
+          RTRIM(f.voucher_no)     AS voucher_no,
+          RTRIM(f.branch_no)      AS branch_no,
+          f.oper_date,
+          RTRIM(f.item_no)        AS item_no,
+          RTRIM(ISNULL(i.item_name,    '')) AS item_name,
+          RTRIM(ISNULL(i.item_clsno,   '')) AS item_clsno,
+          RTRIM(ISNULL(c.item_clsname, '')) AS item_clsname,
+          RTRIM(ISNULL(i.item_brand,     '')) AS item_brand,
+          RTRIM(ISNULL(i.item_brandname, '')) AS item_brandname,
+          RTRIM(ISNULL(i.main_supcust,   '')) AS main_supcust,
+          RTRIM(f.supcust_no)      AS supcust_no,
+          f.real_qty,
+          f.price,
+          f.cost_price,
+          f.real_qty * f.cost_price AS total_cost,
+          f.sheet_amt,
+          ISNULL(f.purchase_tax, 0) AS purchase_tax,
+          f.sale_tax,
+          f.cost_difference
+        FROM dbo.t_im_flow f
+        LEFT JOIN dbo.t_bd_item_info i ON RTRIM(f.item_no) = RTRIM(i.item_no)
+        LEFT JOIN dbo.t_bd_item_cls  c ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
+        WHERE f.sale_way = 'A'
+          AND f.oper_date >= DATEADD(YEAR, -1, GETDATE())
+      description: 采购入库流水(近 1 年,A 单,JOIN 商品主表,带真实成本)
+      primary_key: flow_id
+      measures:
+        - name: count
+          type: count
+          description: 采购笔数
+        - name: total_qty
+          type: sum
+          sql: real_qty
+          description: 总入库量
+        - name: total_real_amt
+          type: sum
+          sql: sheet_amt
+          description: 总入库金额(单据金额)
+        - name: total_cost
+          type: sum
+          sql: total_cost
+          description: 总成本(成本价 × 入库量)
+        - name: total_purchase_tax
+          type: sum
+          sql: purchase_tax
+          description: 总采购税额
+      dimensions:
+        - name: flow_id
+          sql: flow_id
+          type: number
+          primary_key: true
+        - name: oper_date
+          sql: oper_date
+          type: time
+          description: 入库时间(支持 dateRange + granularity)
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: item_no
+          sql: item_no
+          type: string
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: item_clsno
+          sql: item_clsno
+          type: string
+        - name: item_clsname
+          sql: item_clsname
+          type: string
+        - name: item_brand
+          sql: item_brand
+          type: string
+        - name: item_brandname
+          sql: item_brandname
+          type: string
+        - name: main_supcust
+          sql: main_supcust
+          type: string
+        - name: supcust_no
+          sql: supcust_no
+          type: string
+        - name: cost_price
+          sql: cost_price
+          type: number
+      segments: []

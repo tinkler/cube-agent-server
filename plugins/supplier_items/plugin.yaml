@@ -1,0 +1,39 @@
+# ============================================================
+# Plugin: supplier_items
+# 用途:   ?????????(AI ??)
+# 数据源: demo
+# 生成:   2026-08-17T00:35:43+08:00 by AI skill v0.1
+# 业务:   ???????????????????
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: supplier_items
+  version: 0.1.0
+  description: ?????????(AI ??)
+  datasource: demo
+  owner: ai-skill
+  generated_by: skill
+  tags: [ai-generated]
+
+spec:
+  cubes:
+    - name: supplier_items
+      sql: "SELECT * FROM orders WHERE tenant_id = '\'"
+      description: ?????????(AI ??)
+      primary_key: id
+      measures:
+                - name: count
+                  type: count
+                - name: amount
+                  type: sum
+                  sql: amount
+      dimensions:
+              - name: status
+                sql: status
+                type: string
+              - name: customer_id
+                sql: customer_id
+                type: string
+      segments:

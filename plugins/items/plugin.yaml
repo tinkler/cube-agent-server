@@ -1,0 +1,114 @@
+# ============================================================
+# Plugin: items
+# 用途:   HB POS v10 商品主表 t_bd_item_info
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-18 第 2 轮 review 重构
+# 业务:   POS 系统商品档案主表
+# 统计实践:
+#   - 显式列(不用 SELECT *),只暴露 20 个最常用列
+#   - RTRIM 所有 CHAR 字段(AI equals filter 直接搜)
+#   - modify_date 为 type: time(商品建改时间分析)
+#   - 26485 条商品,直查无 WHERE,无性能压力
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: items
+  version: 0.2.0
+  description: HB POS v10 商品主表
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, item, master]
+
+spec:
+  cubes:
+    - name: items
+      # 显式列(避免 SELECT * 引出 65 列,只暴露 20 个常用)
+      # RTRIM CHAR 字段(item_no, item_clsno, item_brand, main_supcust, unit_no, status, item_supcust)
+      sql: |
+        SELECT
+          RTRIM(item_no)        AS item_no,
+          item_subno,
+          item_name,
+          item_subname,
+          RTRIM(item_clsno)     AS item_clsno,
+          RTRIM(item_brand)     AS item_brand,
+          RTRIM(item_brandname) AS item_brandname,
+          RTRIM(unit_no)        AS unit_no,
+          item_size,
+          product_area,
+          price,
+          base_price,
+          sale_price,
+          RTRIM(status)         AS status,
+          RTRIM(main_supcust)   AS main_supcust,
+          RTRIM(item_supcust)   AS item_supcust,
+          purchase_tax,
+          sale_tax,
+          vip_price,
+          modify_date
+        FROM dbo.t_bd_item_info
+      description: HB POS v10 商品档案(主供应商 + 售价/进价/税 + 状态)
+      primary_key: item_no
+      measures:
+        - name: count
+          type: count
+          description: 商品总数
+        - name: total_price
+          type: sum
+          sql: price
+          description: 总进价
+        - name: total_sale_price
+          type: sum
+          sql: sale_price
+          description: 总售价
+        - name: total_base_price
+          type: sum
+          sql: base_price
+          description: 总基准价
+        - name: total_vip_price
+          type: sum
+          sql: vip_price
+          description: 总 VIP 价
+      dimensions:
+        - name: item_no
+          sql: item_no
+          type: string
+          primary_key: true
+        - name: item_subno
+          sql: item_subno
+          type: string
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: item_subname
+          sql: item_subname
+          type: string
+        - name: item_clsno
+          sql: item_clsno
+          type: string
+        - name: item_brand
+          sql: item_brand
+          type: string
+        - name: item_brandname
+          sql: item_brandname
+          type: string
+        - name: unit_no
+          sql: unit_no
+          type: string
+        - name: main_supcust
+          sql: main_supcust
+          type: string
+        - name: item_supcust
+          sql: item_supcust
+          type: string
+        - name: status
+          sql: status
+          type: string
+        - name: modify_date
+          sql: modify_date
+          type: time
+          description: 最后修改时间
+      segments: []

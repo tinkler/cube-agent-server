@@ -1,0 +1,116 @@
+# ============================================================
+# Plugin: sales
+# 用途:   HB POS v10 销售流水(J 商品主表拿分类/供应商)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-18 第 2 轮 review 重构
+# 业务:   t_rm_saleflow + t_bd_item_info LEFT JOIN
+#        支持 AI 查:某商品/分类/供应商 的 每日/每月/每年 销售总额/销量/毛利
+# 统计实践:
+#   - 时间维度用 raw datetime(oper_date, type=time),让 AI 用 dateRange + granularity
+#     不再用字符串日期 + year/month 派生列
+#   - 派生列(总成本 / 毛利 / 毛利率)在 SQL 端 pre-aggregate(因为 sum(col1*col2) 不支持)
+#   - RTRIM 解决 SQL Server CHAR 字段的尾随空格(让 AI equals filter 直接搜)
+#   - WHERE 限制最近 1 年(318 万行全表 GROUP BY 太慢,1 年 70 万行足够)
+#   - INNER JOIN 改成 LEFT JOIN(因为历史流水可能有已删除商品,避免丢记录)
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: sales
+  version: 0.2.0
+  description: HB POS v10 销售流水(J 商品主表:分类/供应商/商品名)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, sales, daily, time-series]
+
+spec:
+  cubes:
+    - name: sales
+      # denormalized view:销售流水 + 商品主表
+      # oper_date 是 raw datetime,AI 用 dateRange + granularity(day/week/month/quarter/year)
+      # gross_profit = sale_money - in_price * sale_qnty 提前算好
+      # total_cost   = in_price * sale_qnty 提前算好
+      # gross_profit_rate 是 per-row 指标(仅作展示),不可 sum
+      sql: |
+        SELECT
+          s.flow_id,
+          RTRIM(s.branch_no)     AS branch_no,
+          s.oper_date,
+          RTRIM(s.item_no)        AS item_no,
+          RTRIM(ISNULL(i.item_name,    '')) AS item_name,
+          RTRIM(ISNULL(i.item_clsno,   '')) AS item_clsno,
+          RTRIM(ISNULL(c.item_clsname, '')) AS item_clsname,
+          RTRIM(ISNULL(i.item_brand,     '')) AS item_brand,
+          RTRIM(ISNULL(i.item_brandname, '')) AS item_brandname,
+          RTRIM(ISNULL(i.main_supcust,   '')) AS main_supcust,
+          s.sale_qnty,
+          s.sale_price,
+          s.sale_money,
+          s.in_price,
+          s.in_price * s.sale_qnty    AS total_cost,
+          s.sale_money - s.in_price * s.sale_qnty AS gross_profit
+        FROM dbo.t_rm_saleflow s
+        LEFT JOIN dbo.t_bd_item_info i ON RTRIM(s.item_no) = RTRIM(i.item_no)
+        LEFT JOIN dbo.t_bd_item_cls  c ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
+        WHERE s.oper_date >= DATEADD(YEAR, -1, GETDATE())
+      description: 销售流水(近 1 年,JOIN 商品主表,按日期/分类/供应商聚合,带毛利)
+      primary_key: flow_id
+      measures:
+        - name: count
+          type: count
+          description: 销售笔数
+        - name: total_qnty
+          type: sum
+          sql: sale_qnty
+          description: 总销量
+        - name: total_revenue
+          type: sum
+          sql: sale_money
+          description: 总销售额
+        - name: total_cost
+          type: sum
+          sql: total_cost
+          description: 总成本(进价 × 销量)
+        - name: total_gross_profit
+          type: sum
+          sql: gross_profit
+          description: 总毛利(销售额 - 总成本)
+      dimensions:
+        - name: flow_id
+          sql: flow_id
+          type: number
+          primary_key: true
+        - name: oper_date
+          sql: oper_date
+          type: time
+          description: 销售时间(支持 dateRange + granularity)
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: item_no
+          sql: item_no
+          type: string
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: item_clsno
+          sql: item_clsno
+          type: string
+        - name: item_clsname
+          sql: item_clsname
+          type: string
+        - name: item_brand
+          sql: item_brand
+          type: string
+        - name: item_brandname
+          sql: item_brandname
+          type: string
+        - name: main_supcust
+          sql: main_supcust
+          type: string
+        - name: sale_price
+          sql: sale_price
+          type: number
+      segments: []

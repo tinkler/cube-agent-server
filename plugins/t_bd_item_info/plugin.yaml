@@ -1,0 +1,223 @@
+# ============================================================
+# Plugin: t_bd_item_info
+# 用途:   商品主数据表，存储商品的基本信息，如编号、名称、分类、品牌、单位等。
+# 数据源: hbpos
+# 生成:   2026-08-18T19:44:09+08:00 by AI skill v0.1
+# 业务:   用 dbo.t_bd_item_info 商品主表建 cube
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: t_bd_item_info
+  version: 0.1.0
+  description: 商品主数据表，存储商品的基本信息，如编号、名称、分类、品牌、单位等。
+  datasource: hbpos
+  owner: ai-skill
+  generated_by: skill
+  tags: [ai-generated]
+
+spec:
+  cubes:
+    - name: t_bd_item_info
+      sql: "SELECT * FROM t_bd_item_info"
+      description: 商品主数据表，存储商品的基本信息，如编号、名称、分类、品牌、单位等。
+      primary_key: item_no
+      measures:
+                - name: price
+                  type: sum
+                  sql: price
+                - name: base_price
+                  type: sum
+                  sql: base_price
+                - name: sale_price
+                  type: sum
+                  sql: sale_price
+                - name: num1
+                  type: sum
+                  sql: num1
+                - name: num2
+                  type: sum
+                  sql: num2
+                - name: num3
+                  type: sum
+                  sql: num3
+                - name: po_cycle
+                  type: sum
+                  sql: po_cycle
+                - name: so_cycle
+                  type: sum
+                  sql: so_cycle
+                - name: purchase_tax
+                  type: sum
+                  sql: purchase_tax
+                - name: sale_tax
+                  type: sum
+                  sql: sale_tax
+                - name: purchase_spec
+                  type: sum
+                  sql: purchase_spec
+                - name: shipment_spec
+                  type: sum
+                  sql: shipment_spec
+                - name: lose_rate
+                  type: sum
+                  sql: lose_rate
+                - name: sup_ly_rate
+                  type: sum
+                  sql: sup_ly_rate
+                - name: return_rate
+                  type: sum
+                  sql: return_rate
+                - name: vip_price
+                  type: sum
+                  sql: vip_price
+                - name: sale_min_price
+                  type: sum
+                  sql: sale_min_price
+                - name: base_price1
+                  type: sum
+                  sql: base_price1
+                - name: base_price2
+                  type: sum
+                  sql: base_price2
+                - name: base_price3
+                  type: sum
+                  sql: base_price3
+                - name: vip_acc_num
+                  type: sum
+                  sql: vip_acc_num
+                - name: trans_price
+                  type: sum
+                  sql: trans_price
+                - name: vip_price1
+                  type: sum
+                  sql: vip_price1
+                - name: vip_price2
+                  type: sum
+                  sql: vip_price2
+                - name: base_price4
+                  type: sum
+                  sql: base_price4
+                - name: order_man_rate
+                  type: sum
+                  sql: order_man_rate
+      dimensions:
+              - name: item_no
+                sql: item_no
+                type: string
+              - name: item_subno
+                sql: item_subno
+                type: string
+              - name: item_name
+                sql: item_name
+                type: string
+              - name: item_subname
+                sql: item_subname
+                type: string
+              - name: item_clsno
+                sql: item_clsno
+                type: string
+              - name: item_brand
+                sql: item_brand
+                type: string
+              - name: item_brandname
+                sql: item_brandname
+                type: string
+              - name: unit_no
+                sql: unit_no
+                type: string
+              - name: item_size
+                sql: item_size
+                type: string
+              - name: product_area
+                sql: product_area
+                type: string
+              - name: combine_sta
+                sql: combine_sta
+                type: string
+              - name: status
+                sql: status
+                type: string
+              - name: display_flag
+                sql: display_flag
+                type: string
+              - name: other1
+                sql: other1
+                type: string
+              - name: other2
+                sql: other2
+                type: string
+              - name: other3
+                sql: other3
+                type: string
+              - name: automin_flag
+                sql: automin_flag
+                type: string
+              - name: en_dis
+                sql: en_dis
+                type: string
+              - name: direct
+                sql: direct
+                type: string
+              - name: change_price
+                sql: change_price
+                type: string
+              - name: item_supcust
+                sql: item_supcust
+                type: string
+              - name: main_supcust
+                sql: main_supcust
+                type: string
+              - name: item_sup_flag
+                sql: item_sup_flag
+                type: string
+              - name: item_stock
+                sql: item_stock
+                type: string
+              - name: item_counter
+                sql: item_counter
+                type: string
+              - name: build_date
+                sql: build_date
+                type: string
+              - name: modify_date
+                sql: modify_date
+                type: string
+              - name: stop_date
+                sql: stop_date
+                type: string
+              - name: abc
+                sql: abc
+                type: string
+              - name: branch_price
+                sql: branch_price
+                type: string
+              - name: item_rem
+                sql: item_rem
+                type: string
+              - name: branch_no
+                sql: branch_no
+                type: string
+              - name: cost_compute
+                sql: cost_compute
+                type: string
+              - name: com_flag
+                sql: com_flag
+                type: string
+              - name: vip_acc_flag
+                sql: vip_acc_flag
+                type: string
+              - name: dpfm_type
+                sql: dpfm_type
+                type: string
+              - name: build_man
+                sql: build_man
+                type: string
+              - name: last_modi_man
+                sql: last_modi_man
+                type: string
+              - name: om_rate_type
+                sql: om_rate_type
+                type: string
+      segments:

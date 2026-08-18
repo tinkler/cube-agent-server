@@ -1,0 +1,62 @@
+# ============================================================
+# Plugin: orders
+# 用途:   订单域数据模型
+# 数据源: demo(SQLite,本地测试)
+# 维护:   改完保存,agent 自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: orders
+  version: 0.1.0
+  description: 订单主表数据模型
+  datasource: demo
+  owner: data-team
+  tags: [core, orders]
+
+spec:
+  cubes:
+    - name: orders
+      sql: "SELECT * FROM orders WHERE tenant_id = '${SECURITY.tenant_id}'"
+      description: 订单主表
+      primary_key: id
+
+      measures:
+        - name: count
+          type: count
+          description: 订单数
+        - name: total_amount
+          type: sum
+          sql: amount
+          description: 订单总金额
+        - name: avg_amount
+          type: avg
+          sql: amount
+          description: 订单平均金额
+
+      dimensions:
+        - name: id
+          sql: id
+          type: number
+          primary_key: true
+          description: 主键
+        - name: status
+          sql: status
+          type: string
+          description: 订单状态
+        - name: customer_id
+          sql: customer_id
+          type: number
+          description: 客户 ID
+        - name: created_at
+          sql: created_at
+          type: time
+          description: 下单时间
+
+      segments:
+        - name: paid
+          sql: "{CUBE}.status IN ('paid', 'shipped', 'done')"
+          description: 已支付
+        - name: unpaid
+          sql: "{CUBE}.status IN ('created', 'pending')"
+          description: 未支付

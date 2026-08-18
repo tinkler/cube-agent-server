@@ -1,0 +1,55 @@
+# ============================================================
+# Cube Agent Server - 主配置
+# 占位符 ${VAR} 会从环境变量或 .env 解析
+# 优先级: 环境变量 > .env 文件 > 本文件默认值
+# ============================================================
+
+server:
+  http_addr: ":8088"
+  grpc_addr: ":9090"
+  timeout: 30s
+  read_header_timeout: 5s
+  shutdown_timeout: 15s
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+
+log:
+  level: info                # debug / info / warn / error
+  format: json               # json / console
+  output: stdout             # stdout / stderr / 文件路径
+  no_color: false
+  rotation:
+    max_size_mb: 100
+    max_age_days: 7
+    max_backups: 10
+    compress: true
+
+plugins:
+  dir: "./plugins"
+  watch: true                # fsnotify 开启热加载
+  history_keep: 3            # 保留几个 .bak 版本
+  auto_reload: true          # 文件变更后自动 reload
+  reload_debounce_ms: 500    # 多次变更合并,避免抖动
+
+ai:
+  cache_dir: ".cache"
+  skill:
+    auto_invalidate_on_schema_change: false   # 用户选 C:手动失效
+    require_dry_run: true
+    max_cube_joins: 3
+    require_security_filter: true
+    default_automation: "semi-auto"          # auto | semi-auto | strict
+  llm:
+    provider: deepseek
+    api_key: "${DEEPSEEK_API_KEY}"
+    base_url: "https://api.deepseek.com/v1"
+    model: "deepseek-chat"
+    timeout: 60s
+    max_retries: 3
+
+security:
+  default_tenant_id: "0"
+  audit_log: true
+  audit_log_path: "./logs/audit.log"

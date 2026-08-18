@@ -1,0 +1,36 @@
+# ============================================================
+# Cube Agent Server - 数据源配置
+# 阉割版:先支持 SQLite(测试用),W3 加 PG/MySQL/CH/SQL Server/CSV
+# ============================================================
+datasources:
+  - name: demo
+    type: sqlite
+    driver: sqlite
+    dsn: "file:./data/demo.db?cache=shared&_pragma=foreign_keys(1)"
+    pool:
+      max_open: 1
+      max_idle: 1
+      max_lifetime_sec: 600
+
+  # 真实 ERP 商品盘点数据(从 testdata/盘点商品表.xls 导入)
+  # seed 工具: go run ./cmd/seed-excel
+  - name: erp
+    type: sqlite
+    driver: sqlite
+    dsn: "file:./data/erp.db?cache=shared&_pragma=foreign_keys(1)"
+    pool:
+      max_open: 1
+      max_idle: 1
+      max_lifetime_sec: 600
+
+  # HB POS v10 真实业务数据(只读账号 ai)
+  # SQL Server 2008 R2 (RTM) - 10.50.1600.1
+  # ⭐ 2008 R2 兼容:DSN 必须带 encrypt=disable + trustservercertificate=true
+  - name: hbpos
+    type: mssql
+    driver: mssql
+    dsn: "sqlserver://ai:ai6725.@localhost:1433?database=hbposv10&encrypt=disable&trustservercertificate=true&log=127"
+    pool:
+      max_open: 5
+      max_idle: 2
+      max_lifetime_sec: 600
