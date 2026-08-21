@@ -29,7 +29,7 @@ datasources:
   - name: hbpos
     type: mssql
     driver: mssql
-    dsn: "sqlserver://ai:ai6725.@localhost:1433?database=hbposv10&encrypt=disable&trustservercertificate=true&log=127"
+    dsn: "sqlserver://ai:ai@localhost:1433?database=hbposv10&encrypt=disable&trustservercertificate=true&log=127"
     pool:
       max_open: 5
       max_idle: 2
