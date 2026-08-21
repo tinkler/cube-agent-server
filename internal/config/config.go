@@ -1,9 +1,9 @@
 // Package config 集中管理 agent 的所有配置
 // 加载顺序(优先级从高到低):
-//   1. 操作系统环境变量(必须以 CUBE_AGENT_ 前缀,内部用 _ 代替 .)
-//   2. 项目根目录的 .env 文件(godotenv 加载,默认不覆盖已有 env)
-//   3. config/agent.yaml 文件(可使用 ${VAR} 占位符引用环境变量)
-//   4. 代码内默认值
+//  1. 操作系统环境变量(必须以 CUBE_AGENT_ 前缀,内部用 _ 代替 .)
+//  2. 项目根目录的 .env 文件(godotenv 加载,默认不覆盖已有 env)
+//  3. config/agent.yaml 文件(可使用 ${VAR} 占位符引用环境变量)
+//  4. 代码内默认值
 package config
 
 import (
@@ -28,12 +28,12 @@ type Config struct {
 
 // ServerConfig HTTP/gRPC 服务配置
 type ServerConfig struct {
-	HTTPAddr           string        `mapstructure:"http_addr"`
-	GRPCAddr           string        `mapstructure:"grpc_addr"`
-	Timeout            time.Duration `mapstructure:"timeout"`
-	ReadHeaderTimeout  time.Duration `mapstructure:"read_header_timeout"`
-	ShutdownTimeout    time.Duration `mapstructure:"shutdown_timeout"`
-	TLS                TLSConfig     `mapstructure:"tls"`
+	HTTPAddr          string        `mapstructure:"http_addr"`
+	GRPCAddr          string        `mapstructure:"grpc_addr"`
+	Timeout           time.Duration `mapstructure:"timeout"`
+	ReadHeaderTimeout time.Duration `mapstructure:"read_header_timeout"`
+	ShutdownTimeout   time.Duration `mapstructure:"shutdown_timeout"`
+	TLS               TLSConfig     `mapstructure:"tls"`
 }
 
 type TLSConfig struct {
@@ -60,16 +60,16 @@ type Rotation struct {
 
 // PluginsConfig plugin 加载相关
 type PluginsConfig struct {
-	Dir             string `mapstructure:"dir"`
-	Watch           bool   `mapstructure:"watch"`
-	HistoryKeep     int    `mapstructure:"history_keep"`
-	AutoReload      bool   `mapstructure:"auto_reload"`
-	ReloadDebounceMs int   `mapstructure:"reload_debounce_ms"`
+	Dir              string `mapstructure:"dir"`
+	Watch            bool   `mapstructure:"watch"`
+	HistoryKeep      int    `mapstructure:"history_keep"`
+	AutoReload       bool   `mapstructure:"auto_reload"`
+	ReloadDebounceMs int    `mapstructure:"reload_debounce_ms"`
 }
 
 // AIConfig AI skill 配置
 type AIConfig struct {
-	CacheDir string     `mapstructure:"cache_dir"`
+	CacheDir string      `mapstructure:"cache_dir"`
 	Skill    SkillConfig `mapstructure:"skill"`
 	LLM      LLMConfig   `mapstructure:"llm"`
 }
@@ -100,18 +100,16 @@ type SecurityConfig struct {
 
 // Load 加载配置
 // 流程:
-//   1. 找项目根目录(从 CWD 向上找 go.mod)
-//   2. 在根目录尝试加载 .env(godotenv 不覆盖已有环境变量)
-//   3. 加载 config/agent.yaml(支持 ${VAR} 占位符)
-//   4. 启用 viper.AutomaticEnv,允许环境变量覆盖任何字段(前缀 CUBE_AGENT_)
+//  1. 加载 config/agent.yaml(支持 ${VAR} 占位符)
+//  2. 启用 viper.AutomaticEnv,允许环境变量覆盖任何字段(前缀 CUBE_AGENT_)
 func Load() (*Config, error) {
-	root, err := findProjectRoot()
+	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("find project root: %w", err)
+		return nil, fmt.Errorf("get working dir: %w", err)
 	}
 
 	// 1. 加载 .env
-	envPath := filepath.Join(root, ".env")
+	envPath := filepath.Join(cwd, ".env")
 	if _, statErr := os.Stat(envPath); statErr == nil {
 		if err := godotenv.Load(envPath); err != nil {
 			return nil, fmt.Errorf("load .env: %w", err)
@@ -124,7 +122,7 @@ func Load() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("agent")
 	v.SetConfigType("yaml")
-	v.AddConfigPath(filepath.Join(root, "config"))
+	v.AddConfigPath(filepath.Join(cwd, "config"))
 	v.AddConfigPath(".")
 	v.AddConfigPath("./config")
 
@@ -155,25 +153,6 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return cfg, nil
-}
-
-// findProjectRoot 从当前目录向上找 go.mod,定位项目根
-func findProjectRoot() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	dir := cwd
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("go.mod not found from %s upward", cwd)
-		}
-		dir = parent
-	}
 }
 
 // bindEnvRecursively 递归地把 viper key 全部绑定到 CUBE_AGENT_xxx_yyy 环境变量
