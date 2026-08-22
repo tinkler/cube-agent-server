@@ -35,6 +35,7 @@ spec:
           RTRIM(si.branch_no)      AS branch_no,
           RTRIM(si.supcust_no)     AS supcust_no,
           RTRIM(ISNULL(sup.sup_name,   '')) AS sup_name,
+          RTRIM(ISNULL(sup.supcust_flag,'')) AS supcust_flag,
           RTRIM(ISNULL(i.item_name,   '')) AS item_name,
           RTRIM(ISNULL(i.item_clsno,  '')) AS item_clsno,
           RTRIM(ISNULL(c.item_clsname,'')) AS item_clsname,
@@ -135,4 +136,12 @@ spec:
         - name: last_price
           sql: last_price
           type: number
-      segments: []
+      segments:
+        # 客户端 Query.Segments=["sup_only"] 引用 → pass3 自动加到 WHERE
+        # 跟 t_bd_item_info / suppliers 同名 segment,语义一致: 排除客户只保留供应商
+        # cube SQL 已 SELECT supcust_flag,subquery 暴露这列,segment 用裸列名
+        # 重要: pass3 把 cube SQL 嵌为 subquery (FROM (cube.SQL) AS cube_name)
+        #   外层 WHERE 只能引用 subquery 暴露的列名(裸名,不带表别名)
+        - name: sup_only
+          sql: "RTRIM(ISNULL(supcust_flag, '')) = 'S'"
+          description: 排除客户,只保留供应商 (supcust_flag='S' = Supplier, 'C' = Customer, 已 SQL 验证)

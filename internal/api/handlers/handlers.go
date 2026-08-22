@@ -2,7 +2,7 @@
 package handlers
 
 // MetaProvider /v1/meta 的数据源抽象
-// 实现方:
+//   实现方:
 //   - MockMetaProvider(D2 测试用)
 //   - schema.MetaProvider(D3 之后,生产用)
 type MetaProvider interface {

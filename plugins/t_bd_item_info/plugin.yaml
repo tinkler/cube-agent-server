@@ -20,7 +20,43 @@ metadata:
 spec:
   cubes:
     - name: t_bd_item_info
-      sql: "SELECT * FROM t_bd_item_info"
+      # 数据治理层 (cube 自己维护):t_bd_item_info 跟 t_bd_supcust_info 的关系
+      # SQL 显式列名,加 LEFT JOIN 取 sup_name → supplier_name
+      #   业务层 (collect-ai) 只需要做"业务字段名 ↔ 物理字段名"映射
+      #   不知道也不关心 join 怎么写
+      #   关键过滤: 客户端通过 segments=["sup_only"] 启用"只供应商"过滤
+      #     supcust_flag = '1' = 供应商(hbpos 约定,需 SQL 验证)
+      #     supcust_flag = '2' = 客户(被 segment 排除,避免 by-brand / 列供应商 时混入客户)
+      #     验证 SQL: SELECT supcust_flag, COUNT(*) FROM t_bd_supcust_info GROUP BY supcust_flag
+      sql: |
+        SELECT
+          t.item_no, t.item_subno, t.item_name, t.item_subname,
+          t.item_clsno, t.item_brand, t.item_brandname,
+          t.unit_no, t.item_size, t.product_area,
+          t.combine_sta, t.status, t.display_flag,
+          t.other1, t.other2, t.other3,
+          t.automin_flag, t.en_dis, t.direct, t.change_price,
+          t.item_supcust, t.main_supcust,
+          t.item_sup_flag, t.item_stock, t.item_counter,
+          t.build_date, t.modify_date, t.stop_date,
+          t.abc, t.branch_price, t.item_rem, t.branch_no,
+          t.cost_compute, t.com_flag, t.vip_acc_flag, t.dpfm_type,
+          t.build_man, t.last_modi_man, t.om_rate_type,
+          t.price, t.base_price, t.sale_price,
+          t.num1, t.num2, t.num3,
+          t.po_cycle, t.so_cycle,
+          t.purchase_tax, t.sale_tax, t.purchase_spec, t.shipment_spec,
+          t.lose_rate, t.sup_ly_rate, t.return_rate,
+          t.vip_price, t.sale_min_price,
+          t.base_price1, t.base_price2, t.base_price3, t.base_price4,
+          t.vip_acc_num, t.trans_price,
+          t.vip_price1, t.vip_price2,
+          t.order_man_rate,
+          RTRIM(ISNULL(sup.sup_name, '')) AS supplier_name,
+          RTRIM(ISNULL(sup.supcust_flag, '')) AS supcust_flag
+        FROM t_bd_item_info t
+        LEFT JOIN t_bd_supcust_info sup
+          ON RTRIM(t.main_supcust) = RTRIM(sup.supcust_no)
       description: 商品主数据表，存储商品的基本信息，如编号、名称、分类、品牌、单位等。
       primary_key: item_no
       measures:
@@ -169,6 +205,10 @@ spec:
               - name: main_supcust
                 sql: main_supcust
                 type: string
+              - name: supplier_name
+                sql: supplier_name
+                type: string
+                description: 主供应商名(LEFT JOIN t_bd_supcust_info 取 sup_name)
               - name: item_sup_flag
                 sql: item_sup_flag
                 type: string
@@ -221,3 +261,15 @@ spec:
                 sql: om_rate_type
                 type: string
       segments:
+        # 客户端 Query.Segments=["sup_only"] 引用 → pass3 自动加到 WHERE
+        #   在 cube 内可重用 {CUBE} 占位符(运行时替换为 cube 实际名)
+        # 重要: pass3 把 cube SQL 嵌为 subquery (FROM (cube.SQL) AS cube_name)
+        #   外层 WHERE 只能引用 subquery 暴露的列名(裸名,不带 t./sup. 前缀)
+        #   所以 supcust_flag 必须在 cube SQL SELECT 列表里暴露,segment 才能引用
+        - name: sup_only
+          sql: "RTRIM(ISNULL(supcust_flag, '')) = 'S'"
+          description: 排除客户,只保留供应商 (supcust_flag='S' = Supplier, 'C' = Customer, 已 SQL 验证)
+        # 后续可加更多 segment,例如:
+        # - name: in_stock_only
+        #   sql: "status = '1' AND display_flag = '1'"
+        #   description: 只看启用 + 在售的商品

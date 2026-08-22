@@ -3,7 +3,8 @@ package schema
 import "fmt"
 
 // MetaProvider 适配 schema.Registry → cube.js 兼容的 meta 格式
-// 供 /v1/meta 和 /cubejs-api/v1/meta 使用
+//   供 /v1/meta 和 /cubejs-api/v1/meta 使用
+//   D2:返回硬编码 mock,D3 切到 Registry 真实数据
 type MetaProvider struct {
 	r *Registry
 }
@@ -24,6 +25,7 @@ func (p *MetaProvider) GetMeta() any {
 	for _, c := range snap.AllCubes() {
 		cubes = append(cubes, cubeToMeta(c, snap))
 	}
+
 	return map[string]any{
 		"cubes":   cubes,
 		"version": snap.Version,
