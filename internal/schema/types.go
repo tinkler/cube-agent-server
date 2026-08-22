@@ -54,6 +54,19 @@ type Cube struct {
 	Dimensions  []Dimension `yaml:"dimensions" json:"dimensions"`
 	Segments    []Segment   `yaml:"segments" json:"segments"`
 	Joins       []Join      `yaml:"joins" json:"joins"`
+
+	// DynamicPlugin 动态 SQL 生成器(可选,yaegi 加载)
+	//   优先级高于 SQL 字段
+	//   plugin 加载失败 → fallback 到 SQL
+	DynamicPlugin *DynamicPluginConfig `yaml:"dynamic_plugin,omitempty" json:"dynamic_plugin,omitempty"`
+}
+
+// DynamicPluginConfig 动态 plugin 配置
+type DynamicPluginConfig struct {
+	// Path plugin .go 文件路径(相对 agent 工作目录)
+	Path string `yaml:"path" json:"path"`
+	// Entry 入口函数名(默认 "Build",接 ctx JSON 返回 plan JSON)
+	Entry string `yaml:"entry,omitempty" json:"entry,omitempty"`
 }
 
 // Measure 指标

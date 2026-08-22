@@ -1,0 +1,121 @@
+# ============================================================
+# Plugin: suppliers
+# 用途:   HB POS v10 供应商主表(208 行)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-22 按 cube-plugin-gen skill 手写
+# 业务:   t_bd_supcust_info 供应商档案主表
+#        支持 AI 查:供应商基本信息(名称/联系人/电话/地址/结算账户)
+# 统计实践:
+#   - 显式 20 列(不用 SELECT * 暴露 40+ 字段)
+#   - RTRIM 所有 CHAR 字段(supcust_no / supcust_flag / region_no / sup_type /
+#     display_flag / check_out_flag / pay_flag / order_flag / acc_level / reg_type /
+#     oper_id / purchase_week / sale_way / settle_branch / com_flag / cust_clsno)
+#   - 208 行小表,无 time filter,无性能压力
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: suppliers
+  version: 0.1.0
+  description: HB POS v10 供应商主表(208 家)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, supplier, master]
+
+spec:
+  cubes:
+    - name: suppliers
+      # 显式 20 列(避免 SELECT * 暴露 40+ 字段)
+      # RTRIM CHAR 字段解决 SQL Server CHAR 尾空格
+      sql: |
+        SELECT
+          RTRIM(supcust_no)        AS supcust_no,
+          RTRIM(supcust_flag)      AS supcust_flag,
+          sup_name,
+          RTRIM(region_no)         AS region_no,
+          RTRIM(sup_type)          AS sup_type,
+          sup_man,
+          sup_addr,
+          sup_tel,
+          sup_email,
+          RTRIM(display_flag)      AS display_flag,
+          RTRIM(pay_flag)          AS pay_flag,
+          RTRIM(order_flag)        AS order_flag,
+          RTRIM(acc_level)         AS acc_level,
+          RTRIM(reg_type)          AS reg_type,
+          credit_amt,
+          mobile,
+          RTRIM(settle_branch)     AS settle_branch,
+          RTRIM(cust_clsno)        AS cust_clsno,
+          modify_date
+        FROM dbo.t_bd_supcust_info
+      description: HB POS v10 供应商档案(名称/联系人/电话/地址/结算)
+      primary_key: supcust_no
+      measures:
+        - name: count
+          type: count
+          description: 供应商总数
+        - name: total_credit
+          type: sum
+          sql: credit_amt
+          description: 总授信额度
+      dimensions:
+        - name: supcust_no
+          sql: supcust_no
+          type: string
+          primary_key: true
+        - name: supcust_flag
+          sql: supcust_flag
+          type: string
+        - name: sup_name
+          sql: sup_name
+          type: string
+        - name: region_no
+          sql: region_no
+          type: string
+        - name: sup_type
+          sql: sup_type
+          type: string
+        - name: sup_man
+          sql: sup_man
+          type: string
+        - name: sup_addr
+          sql: sup_addr
+          type: string
+        - name: sup_tel
+          sql: sup_tel
+          type: string
+        - name: sup_email
+          sql: sup_email
+          type: string
+        - name: display_flag
+          sql: display_flag
+          type: string
+        - name: pay_flag
+          sql: pay_flag
+          type: string
+        - name: order_flag
+          sql: order_flag
+          type: string
+        - name: acc_level
+          sql: acc_level
+          type: string
+        - name: reg_type
+          sql: reg_type
+          type: string
+        - name: mobile
+          sql: mobile
+          type: string
+        - name: settle_branch
+          sql: settle_branch
+          type: string
+        - name: cust_clsno
+          sql: cust_clsno
+          type: string
+        - name: modify_date
+          sql: modify_date
+          type: time
+          description: 最后修改时间
+      segments: []

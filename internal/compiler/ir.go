@@ -42,9 +42,15 @@ type ResolvedTimeDimension struct {
 // ResolvedFilter resolved filter
 type ResolvedFilter struct {
 	Source FilterSource
+	Member string // 原始字段名(如 "sales.item_no"),给 plugin ctx 用
 	Op     string
 	Values []any
 	Expr   sqlbuilder.Expr
+}
+
+// MemberName 返回完整字段名(cube.field 形式)
+func (rf *ResolvedFilter) MemberName() string {
+	return rf.Member
 }
 
 type FilterSource int
@@ -355,7 +361,7 @@ func resolveFilter(f query.Filter, cube *schema.Cube, snap *schema.Schema) (Reso
 			col := sqlbuilder.Col(fieldSQL(d.SQL, d.Name))
 			expr := buildFilterExpr(col, f, d.Type)
 			src := FilterFromDimension
-			return ResolvedFilter{Source: src, Op: f.Operator, Values: f.Values, Expr: expr}, nil
+			return ResolvedFilter{Source: src, Member: f.Member, Op: f.Operator, Values: f.Values, Expr: expr}, nil
 		}
 	}
 	return ResolvedFilter{}, fmt.Errorf("filter field %q not found in cube %q", fieldName, cube.Name)

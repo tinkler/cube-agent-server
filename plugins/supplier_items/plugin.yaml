@@ -1,39 +1,138 @@
 # ============================================================
 # Plugin: supplier_items
-# 用途:   ?????????(AI ??)
-# 数据源: demo
-# 生成:   2026-08-17T00:35:43+08:00 by AI skill v0.1
-# 业务:   ???????????????????
+# 用途:   HB POS v10 供应商-商品关联(42886 行)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-22 按 cube-plugin-gen skill 手写
+# 业务:   t_bd_supcust_item 供应商-商品关联 + 商品名(JOIN t_bd_item_info)
+#        支持 AI 查:某供应商供哪些商品 / 某商品由谁供 / 价格区间
+# 统计实践:
+#   - denormalized view(JOIN t_bd_supcust_info 拿供应商名,JOIN t_bd_item_info 拿商品名)
+#   - 复合主键(item_no + branch_no + supcust_no)在 YAML 用 supcust_item_id 代理
+#   - 显式列,只暴露分析用字段(appointed/top/bottom/last 价格 + 状态)
+#   - 42886 行,无 time filter
 # 维护:   修改后 agent 会自动热加载
 # ============================================================
 apiVersion: cube-agent/v1
 kind: Plugin
 metadata:
   name: supplier_items
-  version: 0.1.0
-  description: ?????????(AI ??)
-  datasource: demo
-  owner: ai-skill
+  version: 0.2.0
+  description: HB POS v10 供应商-商品关联(J 商品主表)
+  datasource: hbpos
+  owner: manual
   generated_by: skill
-  tags: [ai-generated]
+  tags: [hbpos, supplier, item, relation]
 
 spec:
   cubes:
     - name: supplier_items
-      sql: "SELECT * FROM orders WHERE tenant_id = '\'"
-      description: ?????????(AI ??)
-      primary_key: id
+      # denormalized view:供应商-商品关联 + 供应商名 + 商品名 + 商品分类
+      # 用拼接构造代理主键(YAML 里 primary_key 必须唯一)
+      sql: |
+        SELECT
+          RTRIM(si.item_no) + '|' + RTRIM(si.branch_no) + '|' + RTRIM(si.supcust_no) AS supcust_item_id,
+          RTRIM(si.item_no)        AS item_no,
+          RTRIM(si.branch_no)      AS branch_no,
+          RTRIM(si.supcust_no)     AS supcust_no,
+          RTRIM(ISNULL(sup.sup_name,   '')) AS sup_name,
+          RTRIM(ISNULL(i.item_name,   '')) AS item_name,
+          RTRIM(ISNULL(i.item_clsno,  '')) AS item_clsno,
+          RTRIM(ISNULL(c.item_clsname,'')) AS item_clsname,
+          RTRIM(ISNULL(i.item_brand,  '')) AS item_brand,
+          RTRIM(ISNULL(i.item_brandname,'')) AS item_brandname,
+          si.appointed_price,
+          si.top_price,
+          si.bottom_price,
+          si.last_price,
+          RTRIM(si.sale_way)       AS sale_way,
+          si.contract_date,
+          RTRIM(si.pur_status)     AS pur_status,
+          RTRIM(si.default_flag)   AS default_flag,
+          RTRIM(si.direct_flag)    AS direct_flag
+        FROM dbo.t_bd_supcust_item si
+        LEFT JOIN dbo.t_bd_supcust_info sup ON RTRIM(si.supcust_no) = RTRIM(sup.supcust_no)
+        LEFT JOIN dbo.t_bd_item_info    i   ON RTRIM(si.item_no)    = RTRIM(i.item_no)
+        LEFT JOIN dbo.t_bd_item_cls     c   ON RTRIM(i.item_clsno)   = RTRIM(c.item_clsno)
+      description: 供应商-商品关联(供应商名/商品名/分类/价格区间/状态)
+      primary_key: supcust_item_id
       measures:
-                - name: count
-                  type: count
-                - name: amount
-                  type: sum
-                  sql: amount
+        - name: count
+          type: count
+          description: 关联记录数
+        - name: total_appointed_price
+          type: sum
+          sql: appointed_price
+          description: 总约定价
+        - name: total_last_price
+          type: sum
+          sql: last_price
+          description: 总最近价
+        - name: avg_top_price
+          type: avg
+          sql: top_price
+          description: 平均最高价
+        - name: avg_bottom_price
+          type: avg
+          sql: bottom_price
+          description: 平均最低价
       dimensions:
-              - name: status
-                sql: status
-                type: string
-              - name: customer_id
-                sql: customer_id
-                type: string
-      segments:
+        - name: supcust_item_id
+          sql: supcust_item_id
+          type: string
+          primary_key: true
+        - name: item_no
+          sql: item_no
+          type: string
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: supcust_no
+          sql: supcust_no
+          type: string
+        - name: sup_name
+          sql: sup_name
+          type: string
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: item_clsno
+          sql: item_clsno
+          type: string
+        - name: item_clsname
+          sql: item_clsname
+          type: string
+        - name: item_brand
+          sql: item_brand
+          type: string
+        - name: item_brandname
+          sql: item_brandname
+          type: string
+        - name: sale_way
+          sql: sale_way
+          type: string
+        - name: pur_status
+          sql: pur_status
+          type: string
+        - name: default_flag
+          sql: default_flag
+          type: string
+        - name: direct_flag
+          sql: direct_flag
+          type: string
+        - name: contract_date
+          sql: contract_date
+          type: time
+          description: 合同日期
+        - name: appointed_price
+          sql: appointed_price
+          type: number
+        - name: top_price
+          sql: top_price
+          type: number
+        - name: bottom_price
+          sql: bottom_price
+          type: number
+        - name: last_price
+          sql: last_price
+          type: number
+      segments: []

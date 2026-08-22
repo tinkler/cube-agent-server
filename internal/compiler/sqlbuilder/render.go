@@ -20,9 +20,7 @@ const (
 // 同时收集参数 ? 对应的实际值
 type Renderer struct {
 	Dialect Dialect
-	// Args 收集的参数(按 ? 出现顺序)
-	Args []any
-	// identOpen / identClose 标识符引号
+	Args    []any
 	identOpen  string
 	identClose string
 }
@@ -139,7 +137,6 @@ func (r *Renderer) RenderSelect(s *SelectStmt) (string, error) {
 	}
 
 	// LIMIT / OFFSET
-	// SQL Server 走 SELECT TOP N(在上面已写),这里跳过;其他 dialect 走 LIMIT/OFFSET
 	if r.Dialect != DialectMSSQL && s.Limit > 0 {
 		sb.WriteString(fmt.Sprintf(" LIMIT %d", s.Limit))
 	}
@@ -147,6 +144,15 @@ func (r *Renderer) RenderSelect(s *SelectStmt) (string, error) {
 		sb.WriteString(fmt.Sprintf(" OFFSET %d", s.Offset))
 	}
 
+	return sb.String(), nil
+}
+
+// RenderExpr 把单个表达式渲染成 SQL(导出用于调试/插件构建)
+func (r *Renderer) RenderExpr(e Expr) (string, error) {
+	var sb strings.Builder
+	if err := r.renderExpr(&sb, e); err != nil {
+		return "", err
+	}
 	return sb.String(), nil
 }
 
@@ -197,7 +203,6 @@ func (r *Renderer) renderExpr(sb *strings.Builder, e Expr) error {
 		return r.renderLiteral(sb, v.Value)
 	case *Param:
 		sb.WriteString("?")
-		// 参数值由调用方注入
 	case Param:
 		sb.WriteString("?")
 	case *Star:
@@ -270,11 +275,8 @@ func (r *Renderer) renderExpr(sb *strings.Builder, e Expr) error {
 			return err
 		}
 	case *RawExpr:
-		// 原始 SQL 片段(由 segment 解析产出,不做引号处理)
 		sb.WriteString(v.Raw)
 	case *DatePart:
-		// SQL Server 的 date part 标识符:DATEADD(<DatePart>, ...)
-		// 不加引号(关键!)
 		sb.WriteString(v.Unit)
 	default:
 		return fmt.Errorf("unsupported expr type: %T", e)
@@ -313,7 +315,6 @@ func (r *Renderer) renderLiteral(sb *strings.Builder, v any) error {
 }
 
 func (r *Renderer) quote(name string) string {
-	// 如果是 * 之类特殊字符,直接返回
 	if name == "*" {
 		return "*"
 	}
@@ -321,8 +322,6 @@ func (r *Renderer) quote(name string) string {
 }
 
 // Bind 把 ? 参数的实际值注入到 Args
-// 返回调整后的 SQL 和参数数组
-// 调用方: 先调用 RenderSelect 拿到 SQL,再调用 Bind 拿最终参数
 func (r *Renderer) Bind(values []any) []any {
 	out := make([]any, 0, len(values))
 	out = append(out, values...)

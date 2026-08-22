@@ -1,0 +1,95 @@
+# ============================================================
+# Plugin: siss_sales_demo
+# 用途:   演示基于 view 优先的 cube(用 dbo.siss_saleflow 而不是 t_rm_saleflow)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-22 演示用
+# 业务:   dbo.siss_saleflow 是 dbo.t_rm_saleflow 的全集 view(3,188,099 行)
+#        数据完全一致,只是列少了(5 列 vs 11 列)
+#        自补 branch_no/in_price/sale_money 用 LEFT JOIN t_rm_saleflow
+# 优势:   view 抽象了物理表,表名变了 cube 不用改;优化器可能更优
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: siss_sales_demo
+  version: 0.1.0
+  description: 演示 view 优先的 sales cube(用 siss_saleflow view)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, sales, view-driven, demo]
+
+spec:
+  cubes:
+    - name: siss_sales_demo
+      # view-driven denormalized view
+      # siss_saleflow 提供 item_no/sale_price/sale_qnty/oper_date/sell_way
+      # t_rm_saleflow 提供 branch_no/in_price/sale_money/flow_id
+      sql: |
+        SELECT
+          s.flow_id,
+          RTRIM(s.branch_no)        AS branch_no,
+          s.oper_date,
+          RTRIM(si.item_no)         AS item_no,
+          RTRIM(ISNULL(i.item_name,    '')) AS item_name,
+          RTRIM(ISNULL(i.item_clsno,   '')) AS item_clsno,
+          RTRIM(ISNULL(c.item_clsname, '')) AS item_clsname,
+          RTRIM(ISNULL(i.item_brand,   '')) AS item_brand,
+          RTRIM(ISNULL(i.main_supcust, '')) AS main_supcust,
+          s.sale_qnty,
+          s.sale_price,
+          s.sale_money,
+          s.in_price,
+          s.in_price * s.sale_qnty    AS total_cost,
+          s.sale_money - s.in_price * s.sale_qnty AS gross_profit
+        FROM dbo.siss_saleflow si
+        LEFT JOIN dbo.t_rm_saleflow s
+          ON RTRIM(si.item_no) = RTRIM(s.item_no)
+          AND si.oper_date = s.oper_date
+          AND si.sale_qnty = s.sale_qnty
+        LEFT JOIN dbo.t_bd_item_info i
+          ON RTRIM(s.item_no) = RTRIM(i.item_no)
+        LEFT JOIN dbo.t_bd_item_cls  c
+          ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
+        WHERE s.oper_date >= DATEADD(YEAR, -1, GETDATE())
+      description: 销售流水(view 优先:用 siss_saleflow view + 自补列)
+      primary_key: flow_id
+      measures:
+        - name: count
+          type: count
+        - name: total_revenue
+          type: sum
+          sql: sale_money
+        - name: total_gross_profit
+          type: sum
+          sql: gross_profit
+      dimensions:
+        - name: flow_id
+          sql: flow_id
+          type: number
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: oper_date
+          sql: oper_date
+          type: time
+        - name: item_no
+          sql: item_no
+          type: string
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: main_supcust
+          sql: main_supcust
+          type: string
+        - name: item_brand
+          sql: item_brand
+          type: string
+        - name: item_clsno
+          sql: item_clsno
+          type: string
+        - name: item_clsname
+          sql: item_clsname
+          type: string
+      segments: []

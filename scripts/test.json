@@ -1,0 +1,1 @@
+{"measures":["supplier_sales.count"],"dimensions":["supplier_sales.main_supcust"],"timeDimensions":[{"dimension":"supplier_sales.oper_date","dateRange":["2026-08-15","2026-08-18"]}],"limit":5}

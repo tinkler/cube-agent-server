@@ -1,11 +1,15 @@
 package compiler
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/tinkler/cube-agent-server/internal/compiler/sqlbuilder"
+	"github.com/tinkler/cube-agent-server/internal/cubegen"
+	"github.com/tinkler/cube-agent-server/internal/cubegenapi"
+	"github.com/tinkler/cube-agent-server/internal/schema"
 	"github.com/tinkler/cube-agent-server/internal/security"
 )
 
@@ -49,9 +53,14 @@ func Pass3(ir *ResolvedIR, dialect sqlbuilder.Dialect, sec *security.Context) (*
 
 	// 2. 构造 FROM:从 cube.SQL 提取物理表(简化:作为子查询,别名为 cube name)
 	//   阉割版: cube.SQL 整段作为 derived table,alias = cube name
-	fromSQL := cube.SQL
-	// 注入 security 占位符
-	fromSQL = renderSecurity(fromSQL, sec)
+	//   可选:用 cubegen 动态 plugin 替代,根据 query 决定 JOIN
+	fromSQL, pluginUsed := resolveCubeFromSQL(ir, cube, sec, dialect)
+	if pluginUsed {
+		// plugin 跑了,降级不致命
+		defer func() {
+			// nothing to do, log 已打
+		}()
+	}
 
 	from := &sqlbuilder.TableRef{
 		Name:   cube.Name,
@@ -377,3 +386,99 @@ func exprsEqual(a, b sqlbuilder.Expr) bool {
 	}
 	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
+
+// resolveCubeFromSQL 决定 cube 的 FROM/WHERE 片段
+//   优先用 DynamicPlugin(plugin 返回 SQLPlan)
+//   失败 fallback 到 cube.SQL(YAML 静态 SQL)
+//   返回:fromSQL(完整 SQL 文本),pluginUsed(bool)
+func resolveCubeFromSQL(ir *ResolvedIR, cube *schema.Cube, sec *security.Context, dialect sqlbuilder.Dialect) (string, bool) {
+	if cube.DynamicPlugin == nil {
+		// 走静态 YAML
+		fromSQL := cube.SQL
+		fromSQL = renderSecurity(fromSQL, sec)
+		return fromSQL, false
+	}
+
+	// 走 dynamic plugin
+	pluginPath := cube.DynamicPlugin.Path
+	ctx := buildPluginContext(ir, cube)
+	plan, err := cubegen.CallPlugin(pluginPath, ctx)
+	if err != nil {
+		// plugin 失败,降级到静态 SQL
+		fromSQL := cube.SQL
+		fromSQL = renderSecurity(fromSQL, sec)
+		return fromSQL, false
+	}
+
+	// 把 SQLPlan 渲染成 SQL 文本(SELECT * FROM ... LEFT JOIN ... WHERE ...)
+	return renderPluginPlanAsSQL(plan, dialect), true
+}
+
+// buildPluginContext 从 ResolvedIR 构造 cubegenapi.BuildContext
+func buildPluginContext(ir *ResolvedIR, cube *schema.Cube) *cubegenapi.BuildContext {
+	ctx := &cubegenapi.BuildContext{
+		CubeName:            cube.Name,
+		RequestedMeasures:   nil,
+		RequestedDimensions: nil,
+	}
+	for _, m := range ir.Measures {
+		ctx.RequestedMeasures = append(ctx.RequestedMeasures, m.Name)
+	}
+	for _, d := range ir.Dimensions {
+		ctx.RequestedDimensions = append(ctx.RequestedDimensions, d.Name)
+	}
+	if len(ir.TimeDimensions) > 0 {
+		td := ir.TimeDimensions[0]
+		ctx.RequestedTimeDim = &cubegenapi.TimeDimensionRequest{
+			Dimension:   td.Name,
+			Granularity: td.Granularity,
+			DateRange:   td.DateRange,
+		}
+	}
+	for _, f := range ir.Filters {
+		ctx.RequestedFilters = append(ctx.RequestedFilters, cubegenapi.FilterRequest{
+			Member:   f.MemberName(),
+			Operator: f.Op,
+			Values:   f.Values,
+		})
+	}
+	return ctx
+}
+
+// renderPluginPlanAsSQL 把 SQLPlan 渲染成 SQL 文本
+//   用于嵌入到外层 SELECT 的 FROM 子查询
+//   优先用 plan.Cols(插件显式选择列);空时用 SELECT main_alias.*
+func renderPluginPlanAsSQL(plan *cubegenapi.SQLPlan, dialect sqlbuilder.Dialect) string {
+	if plan == nil || plan.From == nil {
+		return "SELECT 1 AS _empty"
+	}
+	var cols []sqlbuilder.SelectColumn
+	if len(plan.Cols) > 0 {
+		// 用插件显式列
+		cols = plan.Cols
+	} else {
+		// 回退:SELECT main_alias.*
+		mainAlias := plan.From.Name
+		if mainAlias == "" {
+			mainAlias = "s"
+		}
+		cols = []sqlbuilder.SelectColumn{
+			{Expr: sqlbuilder.QCol(mainAlias, "*")},
+		}
+	}
+	stmt := &sqlbuilder.SelectStmt{
+		Columns: cols,
+		From:    plan.From,
+		Joins:   plan.Joins,
+		Where:   plan.Where,
+	}
+	r := sqlbuilder.NewRenderer(dialect)
+	s, err := r.RenderSelect(stmt)
+	if err != nil {
+		return "SELECT 1 AS _err"
+	}
+	return s
+}
+
+// _ = json.Marshal 占位避免 import 警告(暂时未用)
+var _ = json.Marshal

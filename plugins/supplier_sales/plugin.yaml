@@ -1,0 +1,119 @@
+# ============================================================
+# Plugin: supplier_sales
+# 用途:   HB POS v10 供应商日/周/月销售汇总
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-22 按 cube-plugin-gen skill 手写
+# 业务:   t_rm_saleflow + t_bd_item_info(main_supcust 关联供应商)
+#        支持 AI 查:某供应商的每日/每月销售总额/销量/毛利
+#        跨表关联(用 t_bd_item_info.main_supcust 字段),不走 t_bd_supcust_item
+# 统计实践:
+#   - 时间维度 raw datetime(oper_date, type=time),AI 用 dateRange + granularity
+#   - pre-aggregate 派生列(total_cost / gross_profit)
+#   - RTRIM 所有 CHAR 字段
+#   - WHERE 限制 1 年(70 万行扫描,SQL Server 2008 R2 老库)
+#   - denormalized view:销售流水 + 商品主表(拿 main_supcust + 商品名)
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: supplier_sales
+  version: 0.1.0
+  description: HB POS v10 供应商日销售(J 商品主表取 main_supcust)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, supplier, sales, daily, time-series]
+
+spec:
+  cubes:
+    - name: supplier_sales
+      # ⭐ 动态 plugin:按 query 字段决定 JOIN
+      #   加载失败 / 文件缺失 → 自动 fallback 到下面的 sql
+      dynamic_plugin:
+        path: "F:/go/src/dynamic-plugins/supplier_sales/gen.go"
+        entry: Build
+      # denormalized view:销售流水 + 商品主表(main_supcust = 供应商号)
+      # 注意:JOIN 走 i.main_supcust,不走 t_bd_supcust_item(后者有 42886 行 1:N,JOIN 后爆)
+      # pre-aggregate 派生列:total_cost / gross_profit
+      sql: |
+        SELECT
+          s.flow_id,
+          RTRIM(s.branch_no)      AS branch_no,
+          s.oper_date,
+          RTRIM(s.item_no)        AS item_no,
+          RTRIM(ISNULL(i.item_name,   '')) AS item_name,
+          RTRIM(ISNULL(i.item_clsno,  '')) AS item_clsno,
+          RTRIM(ISNULL(c.item_clsname,'')) AS item_clsname,
+          RTRIM(ISNULL(i.item_brand,  '')) AS item_brand,
+          RTRIM(ISNULL(i.item_brandname,'')) AS item_brandname,
+          RTRIM(ISNULL(i.main_supcust,'')) AS main_supcust,
+          s.sale_qnty,
+          s.sale_price,
+          s.sale_money,
+          s.in_price,
+          s.in_price * s.sale_qnty    AS total_cost,
+          s.sale_money - s.in_price * s.sale_qnty AS gross_profit
+        FROM dbo.t_rm_saleflow s
+        LEFT JOIN dbo.t_bd_item_info i ON RTRIM(s.item_no) = RTRIM(i.item_no)
+        LEFT JOIN dbo.t_bd_item_cls  c ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
+        WHERE s.oper_date >= DATEADD(YEAR, -1, GETDATE())
+      description: 供应商日销售(近 1 年,按 main_supcust 关联,带毛利)
+      primary_key: flow_id
+      measures:
+        - name: count
+          type: count
+          description: 销售笔数
+        - name: total_qnty
+          type: sum
+          sql: sale_qnty
+          description: 总销量
+        - name: total_revenue
+          type: sum
+          sql: sale_money
+          description: 总销售额
+        - name: total_cost
+          type: sum
+          sql: total_cost
+          description: 总成本
+        - name: total_gross_profit
+          type: sum
+          sql: gross_profit
+          description: 总毛利
+      dimensions:
+        - name: flow_id
+          sql: flow_id
+          type: number
+          primary_key: true
+        - name: oper_date
+          sql: oper_date
+          type: time
+          description: 销售时间(支持 dateRange + granularity)
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: item_no
+          sql: item_no
+          type: string
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: item_clsno
+          sql: item_clsno
+          type: string
+        - name: item_clsname
+          sql: item_clsname
+          type: string
+        - name: item_brand
+          sql: item_brand
+          type: string
+        - name: item_brandname
+          sql: item_brandname
+          type: string
+        - name: main_supcust
+          sql: main_supcust
+          type: string
+        - name: sale_price
+          sql: sale_price
+          type: number
+      segments: []

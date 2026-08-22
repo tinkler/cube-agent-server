@@ -47,3 +47,7 @@ config/*.local.yml
 /testdata
 logs
 tmp_*.json
+*.go~
+
+
+dynamic-plugins/

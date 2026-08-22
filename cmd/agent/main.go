@@ -19,6 +19,7 @@ import (
 	"github.com/tinkler/cube-agent-server/internal/api/handlers"
 	"github.com/tinkler/cube-agent-server/internal/compiler/sqlbuilder"
 	appconfig "github.com/tinkler/cube-agent-server/internal/config"
+	"github.com/tinkler/cube-agent-server/internal/cubegen"
 	"github.com/tinkler/cube-agent-server/internal/engine"
 	"github.com/tinkler/cube-agent-server/internal/engine/source"
 	"github.com/tinkler/cube-agent-server/internal/log"
@@ -148,6 +149,41 @@ func main() {
 		cfg.Plugins.Watch,
 		dsNames(dsCfgs),
 	)
+
+	// 触发初始 scan(否则 registry.Snapshot() 拿不到 plugin)
+	if err := pm.Reload(); err != nil {
+		logger.Warn("plugin initial scan", zap.Error(err))
+	}
+
+	// 7.5 cubegen: 初始化 yaegi loader,扫描所有 cube 的 dynamic_plugin
+	//   失败不致命(各 plugin 各自 fallback)
+	cubegenLoader, cerr := cubegen.NewYaegiLoader()
+	if cerr != nil {
+		logger.Warn("cubegen loader init failed (dynamic plugins disabled)", zap.Error(cerr))
+	} else {
+		cubegen.SetGlobalLoader(cubegenLoader)
+		loaded := 0
+		snap := registry.Snapshot()
+		for _, p := range snap.Plugins {
+			for _, c := range p.Spec.Cubes {
+				if c.DynamicPlugin == nil {
+					continue
+				}
+			if lerr := cubegenLoader.LoadFile(c.DynamicPlugin.Path); lerr != nil {
+				logger.Warn("cubegen plugin load failed (will fallback to SQL)",
+					zap.String("cube", c.Name),
+					zap.String("path", c.DynamicPlugin.Path),
+					zap.Error(lerr))
+			} else {
+				loaded++
+				logger.Info("cubegen plugin loaded",
+					zap.String("cube", c.Name),
+					zap.String("path", c.DynamicPlugin.Path))
+			}
+			}
+		}
+		logger.Info("cubegen initialized", zap.Int("loaded_plugins", loaded))
+	}
 
 	// 8. AI skill builder
 	var llmClient llm.Client

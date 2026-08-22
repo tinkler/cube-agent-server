@@ -139,6 +139,21 @@ func Min(a Expr) Expr                        { return &Func{Name: "MIN", Args: [
 func Max(a Expr) Expr                        { return &Func{Name: "MAX", Args: []Expr{a}} }
 func Coalesce(args ...Expr) Expr             { return &Func{Name: "COALESCE", Args: args} }
 
+// RTRIM SQL Server / 标准 SQL 字符串修剪函数
+//   解决 CHAR 字段的尾随空格(让 equals filter 直接命中)
+func RTRIM(a Expr) Expr                      { return &Func{Name: "RTRIM", Args: []Expr{a}} }
+
+// LTRIM 字符串左修剪
+func LTRIM(a Expr) Expr                      { return &Func{Name: "LTRIM", Args: []Expr{a}} }
+
+// TRIM 字符串两端修剪
+func TRIM(a Expr) Expr                      { return &Func{Name: "TRIM", Args: []Expr{a}} }
+
+// IsNullOrEmpty 兼容 NULL 或空字符串(a IS NULL OR a = '')
+func IsNullOrEmpty(a Expr) Expr {
+	return Or(IsNull(a), Eq(a, Lit("")))
+}
+
 // DateTrunc 时间截断(SQL 标准: DATE_TRUNC('day', col))
 // 实际 SQL 方言: PG/CH 用 DATE_TRUNC,MySQL 用 DATE_FORMAT,SQLite 用 strftime
 // W2 阶段先支持 PG/CH/SQLite 的 DATE_TRUNC,方言差异在 Renderer 处理
