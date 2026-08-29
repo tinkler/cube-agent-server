@@ -1,0 +1,65 @@
+# ============================================================
+# Plugin: inventory_current
+# 用途:   HB POS v10 各门店商品当前库存快照
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-27 按 cube-plugin-gen skill 手写
+# 业务:   每 (branch, item) 的当前库存量 stock_qty
+#        支持 AI 查:某门店所有库存 / 某商品各门店分布 / 低库存预警
+# 统计实践:
+#   - 直接用 t_im_branch_stock 主表(23K 行,小表全量)
+#   - 显式列(不用 SELECT *),只暴露最常用 5 列
+#   - CHAR 字段 RTRIM
+#   - 没有 WHERE,小表全量扫无压力
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: inventory_current
+  version: 0.1.0
+  description: HB POS v10 各门店商品当前库存快照
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, inventory, stock, snapshot]
+
+spec:
+  cubes:
+    - name: inventory_current
+      # 库存快照:每 (branch, item) 一行
+      # 23K 行小表,直查无 WHERE
+      # RTRIM CHAR 字段(item_no char(20), branch_no char(6))
+      sql: |
+        SELECT
+          RTRIM(branch_no)        AS branch_no,
+          RTRIM(item_no)          AS item_no,
+          stock_qty,
+          route_qty,
+          avg_cost
+        FROM dbo.t_im_branch_stock
+      description: 各门店商品当前库存(数量/在途/平均成本)
+      primary_key: item_no
+      measures:
+        - name: count
+          type: count
+          description: (branch,item) 行数
+        - name: stock_qty
+          type: sum
+          sql: stock_qty
+          description: 当前库存总量(可按门店/商品 SUM)
+        - name: route_qty
+          type: sum
+          sql: route_qty
+          description: 在途数量
+        - name: avg_cost
+          type: avg
+          sql: avg_cost
+          description: 平均成本(行级均值的再次平均)
+      dimensions:
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: item_no
+          sql: item_no
+          type: string
+      segments: []

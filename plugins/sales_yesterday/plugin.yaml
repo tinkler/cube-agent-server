@@ -1,0 +1,108 @@
+# ============================================================
+# Plugin: sales_yesterday
+# 用途:   HB POS v10 商品近期销售汇总(昨日 / 7d / 30d 日均)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-27 按 cube-plugin-gen skill 手写
+# 业务:   监控每个 (门店, 商品) 的短期销量:
+#          - sale_qty_yesterday  = 昨日全天销量
+#          - sale_qty_7d_avg     = 过去 7 天日均销量(不含今天)
+#          - sale_qty_30d_avg    = 过去 30 天日均销量(不含今天)
+# 统计实践:
+#   - 直接用 t_rm_saleflow 主表(11 列,siss_saleflow view 5 列是子集,自连太重跳过)
+#   - 显式列,5 维 3 度量,全部 RTRIM
+#   - barcode: t_bd_item_barcode 用 MIN 子查询去重(部分商品有 1-N 个条码)
+#   - supplier_name: t_bd_item_info.main_supcust → t_bd_supcust_info.sup_name
+#   - WHERE 限制 31 天数据(30 天窗口需要,避免 1 年全表扫)
+#   - pre-aggregate 派生列:yesterday / 7d_avg / 30d_avg 全部在 SQL 里算好
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: sales_yesterday
+  version: 0.1.0
+  description: HB POS v10 商品近期销量(昨日 / 7d / 30d 日均,J 商品+条码+供应商)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, sales, daily, time-window]
+
+spec:
+  cubes:
+    - name: sales_yesterday
+      # denormalized SQL: t_rm_saleflow + 商品 + 条码 + 供应商
+      # 跳过 siss_saleflow view(自连 t_rm_saleflow 太重,3.18M x 3.18M)
+      # t_bd_item_info INNER JOIN 拿 item_name + main_supcust
+      # t_bd_item_barcode 用 MIN 子查询去重(部分商品 1-N 个条码)
+      # t_bd_supcust_info LEFT JOIN 拿 sup_name(经 main_supcust)
+      # ⭐ JOIN 不用 RTRIM:SQL Server 2008 R2 CHAR 比较天然处理尾空格,
+      #   RTRIM 后函数包裹无法走索引(实测从 120s+ 降到 7s)
+      # 时间窗口: [today-31, today)  -> 足够覆盖 30 天统计
+      sql: |
+        SELECT
+          RTRIM(s.branch_no)                              AS branch_no,
+          RTRIM(s.item_no)                                AS item_no,
+          RTRIM(ISNULL(i.item_name, ''))                  AS item_name,
+          RTRIM(ISNULL(bc.item_barcode, ''))              AS barcode,
+          RTRIM(ISNULL(sup.sup_name, ''))                 AS supplier_name,
+          -- 昨日: 日历日 [today-1, today)
+          SUM(CASE WHEN s.oper_date >= DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
+                    AND s.oper_date <  CAST(GETDATE() AS DATE)
+                THEN s.sale_qnty ELSE 0 END)              AS sale_qty_yesterday,
+          -- 7d 日均: 日历日 [today-7, today) 总量 / 7
+          CAST(SUM(CASE WHEN s.oper_date >= DATEADD(DAY, -7,  CAST(GETDATE() AS DATE))
+                          AND s.oper_date <  CAST(GETDATE() AS DATE)
+                      THEN s.sale_qnty ELSE 0 END) / 7.0  AS DECIMAL(18,4)) AS sale_qty_7d_avg,
+          -- 30d 日均: 日历日 [today-30, today) 总量 / 30
+          CAST(SUM(CASE WHEN s.oper_date >= DATEADD(DAY, -30, CAST(GETDATE() AS DATE))
+                          AND s.oper_date <  CAST(GETDATE() AS DATE)
+                      THEN s.sale_qnty ELSE 0 END) / 30.0 AS DECIMAL(18,4)) AS sale_qty_30d_avg
+        FROM dbo.t_rm_saleflow s
+        INNER JOIN dbo.t_bd_item_info i
+          ON s.item_no = i.item_no
+        LEFT JOIN (
+          SELECT item_no, MIN(item_barcode) AS item_barcode
+          FROM dbo.t_bd_item_barcode
+          GROUP BY item_no
+        ) bc
+          ON s.item_no = bc.item_no
+        LEFT JOIN dbo.t_bd_supcust_info sup
+          ON i.main_supcust = sup.supcust_no
+        WHERE s.oper_date >= DATEADD(DAY, -31, CAST(GETDATE() AS DATE))
+        GROUP BY
+          s.branch_no, s.item_no, i.item_name, bc.item_barcode, sup.sup_name
+      description: 商品近期销量(昨日/7d/30d 日均,J 商品+条码+供应商名)
+      primary_key: item_no
+      measures:
+        - name: count
+          type: count
+          description: (branch,item,barcode,supplier) 行数
+        - name: sale_qty_yesterday
+          type: sum
+          sql: sale_qty_yesterday
+          description: 昨日销量(SUM = 跨行合并)
+        - name: sale_qty_7d_avg
+          type: avg
+          sql: sale_qty_7d_avg
+          description: 过去 7 天日均销量(pre-aggregated, AVG 为跨行均)
+        - name: sale_qty_30d_avg
+          type: avg
+          sql: sale_qty_30d_avg
+          description: 过去 30 天日均销量(pre-aggregated, AVG 为跨行均)
+      dimensions:
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: item_no
+          sql: item_no
+          type: string
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: barcode
+          sql: barcode
+          type: string
+        - name: supplier_name
+          sql: supplier_name
+          type: string
+      segments: []

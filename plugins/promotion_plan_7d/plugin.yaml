@@ -1,0 +1,60 @@
+# ============================================================
+# Plugin: promotion_plan_7d
+# 用途:   HB POS v10 未来 7 天内生效的促销单(按门店+商品聚合)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-27 按 cube-plugin-gen skill 手写
+# 业务:   监控未来 7 天内 [today, today+7d] 生效的促销计划
+#        每条促销行(plan_flow)对应 (plan_no, item_no) 一对
+#        t_pub_plan_flow.branch_no 在 hbpos 里固定为 "00|"(全部门店),
+#        所以 cube 也以 branch_no='00' 暴露,后续如果系统支持具体门店再扩
+# 统计实践:
+#   - 显式 2 列(branch_no, item_no)+ plan_no 在 SQL 里但不在 dimensions
+#     (保留 plan_no 是为了去重,避免同一 (plan, item) 多次计数)
+#   - COUNT 指标:每个 (branch, item) 的促销单条数
+#   - RTRIM CHAR/VARCHAR 字段
+#   - WHERE 时间窗:begin_date <= today+7d AND end_date >= today
+#   - 排除空 item_no(部分促销是分类/品牌级,没具体 item)
+#   - DISTINCT plan_no + item_no 防止同一 plan+item 在 plan_flow 里出现多次
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: promotion_plan_7d
+  version: 0.1.0
+  description: HB POS v10 未来 7 天生效的促销单(按门店+商品聚合,COUNT)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, promotion, plan, daily, 7d]
+
+spec:
+  cubes:
+    - name: promotion_plan_7d
+      # 未来 7 天窗口: [today, today+7d] 之间 begin_date <= today+7d AND end_date >= today
+      # 排除 item_no IS NULL 的分类/品牌级促销
+      # DISTINCT 避免 plan_flow 同一 (plan_no, item_no) 重复行
+      sql: |
+        SELECT DISTINCT
+          '00'                     AS branch_no,
+          RTRIM(pf.item_no)        AS item_no,
+          RTRIM(pf.plan_no)        AS plan_no
+        FROM dbo.t_pub_plan_flow pf
+        WHERE pf.begin_date <= DATEADD(DAY, 7, CAST(GETDATE() AS DATE))
+          AND pf.end_date   >= CAST(GETDATE() AS DATE)
+          AND pf.item_no IS NOT NULL
+          AND RTRIM(pf.item_no) <> ''
+      description: 未来 7 天生效的促销单(按 branch+item 聚合,COUNT)
+      primary_key: item_no
+      measures:
+        - name: count
+          type: count
+          description: 该 (branch,item) 的促销单条数
+      dimensions:
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: item_no
+          sql: item_no
+          type: string
+      segments: []
