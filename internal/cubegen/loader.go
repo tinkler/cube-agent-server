@@ -20,20 +20,20 @@ import (
 )
 
 // YaegiLoader 加载器
+//   ⚠️ 2026-08-31 fix: 每个 plugin 文件独立 interp,避免 stdlib sym 互相污染
+//     原设计:全局共享 l.interp,先加载 supplier_sales → 注入 encoding/json sym
+//            后加载 display_restock_window → 报 "json_.go redeclared"
+//     修法:interps map[path]*Interpreter,每个文件 fresh interp
 type YaegiLoader struct {
 	mu         sync.Mutex
-	interp     *interp.Interpreter
+	interps    map[string]*interp.Interpreter
 	loaded     map[string]string
 	fileMTimes map[string]time.Time
 }
 
 func NewYaegiLoader() (*YaegiLoader, error) {
-	i, err := newInterp()
-	if err != nil {
-		return nil, err
-	}
 	return &YaegiLoader{
-		interp:     i,
+		interps:    map[string]*interp.Interpreter{},
 		loaded:     map[string]string{},
 		fileMTimes: map[string]time.Time{},
 	}, nil
@@ -51,6 +51,7 @@ func newInterp() (*interp.Interpreter, error) {
 }
 
 // LoadFile 加载 .go 源文件(只验证语法,真正调用走 CallBuildSQL)
+//   每个文件独立 interp,避免 cross-plugin 污染
 func (l *YaegiLoader) LoadFile(path string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -72,23 +73,22 @@ func (l *YaegiLoader) LoadFile(path string) error {
 		return fmt.Errorf("yaegi: read %s: %w", path, err)
 	}
 
-	if _, ok := l.loaded[path]; ok {
-		l.interp, err = newInterp()
-		if err != nil {
-			return err
-		}
+	// 每文件 fresh interp(不再跨文件共享)
+	interp, err := newInterp()
+	if err != nil {
+		return err
 	}
-
-	if _, err := l.interp.Eval(string(src)); err != nil {
+	if _, err := interp.Eval(string(src)); err != nil {
 		l.loaded[path] = fmt.Sprintf("eval err: %v", err)
 		return fmt.Errorf("yaegi: eval %s: %w", path, err)
 	}
 	// 验证 Build 函数存在
-	if _, err := l.interp.Eval("Build"); err != nil {
+	if _, err := interp.Eval("Build"); err != nil {
 		l.loaded[path] = fmt.Sprintf("Build missing: %v", err)
 		return fmt.Errorf("yaegi: Build not found in %s: %w", path, err)
 	}
 
+	l.interps[path] = interp
 	l.loaded[path] = "ok"
 	l.fileMTimes[path] = mtime
 	return nil
@@ -118,13 +118,18 @@ func (l *YaegiLoader) CallBuildSQL(path string, ctx *cubegenapi.BuildContext) (*
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	interp, ok := l.interps[path]
+	if !ok {
+		return nil, fmt.Errorf("yaegi: plugin %s not loaded", path)
+	}
+
 	ctxJSON, err := json.Marshal(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("ctx json: %w", err)
 	}
 
 	// 调 plugin:Build(ctxJSON)
-	src, err := l.interp.Eval(fmt.Sprintf(`Build(%q)`, string(ctxJSON)))
+	src, err := interp.Eval(fmt.Sprintf(`Build(%q)`, string(ctxJSON)))
 	if err != nil {
 		return nil, fmt.Errorf("yaegi: call Build: %w", err)
 	}
