@@ -10,12 +10,12 @@ apiVersion: cube-agent/v1
 kind: Plugin
 metadata:
   name: t_bd_item_info
-  version: 0.1.0
-  description: 商品主数据表，存储商品的基本信息，如编号、名称、分类、品牌、单位等。
+  version: 0.2.0
+  description: 商品主数据表 + 库存快照(2026-09-01 加 stock_qty 字段，供扫商品用)
   datasource: hbpos
-  owner: ai-skill
+  owner: manual
   generated_by: skill
-  tags: [ai-generated]
+  tags: [ai-generated, stock]
 
 spec:
   cubes:
@@ -28,6 +28,9 @@ spec:
       #     supcust_flag = '1' = 供应商(hbpos 约定,需 SQL 验证)
       #     supcust_flag = '2' = 客户(被 segment 排除,避免 by-brand / 列供应商 时混入客户)
       #     验证 SQL: SELECT supcust_flag, COUNT(*) FROM t_bd_supcust_info GROUP BY supcust_flag
+      # 2026-09-01 加 stock_qty:
+      #   标量子查询聚合 t_im_branch_stock.stock_qty(全门店 SUM) — 不展开行,
+      #   item 行数不变(11W+),扫描依然快;SQL Server 2008 R2 兼容(子查询 + ISNULL)
       sql: |
         SELECT
           t.item_no, t.item_subno, t.item_name, t.item_subname,
@@ -53,13 +56,21 @@ spec:
           t.vip_price1, t.vip_price2,
           t.order_man_rate,
           RTRIM(ISNULL(sup.sup_name, '')) AS supplier_name,
-          RTRIM(ISNULL(sup.supcust_flag, '')) AS supcust_flag
+          RTRIM(ISNULL(sup.supcust_flag, '')) AS supcust_flag,
+          ISNULL((SELECT SUM(stock_qty) FROM t_im_branch_stock WHERE item_no = t.item_no), 0) AS stock_qty
         FROM t_bd_item_info t
         LEFT JOIN t_bd_supcust_info sup
           ON RTRIM(t.main_supcust) = RTRIM(sup.supcust_no)
       description: 商品主数据表，存储商品的基本信息，如编号、名称、分类、品牌、单位等。
       primary_key: item_no
       measures:
+                - name: count
+                  type: count
+                  description: (item) 行数
+                - name: stock_qty
+                  type: sum
+                  sql: stock_qty
+                  description: 当前总库存(全门店 SUM,Scalar Subquery 预聚合,item 行数不变)
                 - name: price
                   type: sum
                   sql: price
