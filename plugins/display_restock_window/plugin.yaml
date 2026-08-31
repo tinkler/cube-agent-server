@@ -1,0 +1,90 @@
+# ============================================================
+# Plugin: display_restock_window
+# 用途:   HB POS v10 "陈列补货建议"专用 cube(collect-ai restock 新版)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-08-30 按 cube-plugin-gen skill 手写 + yaegi 动态 plugin
+# 业务:   每次 cron tick 拉"指定时间窗口"的销售流水 + 当前库存快照
+#         时间窗由调用方传 dateRange(每次 tick 不同):
+#           - 07:00 → 昨日 20:30 ~ 今 07:00(10.5h 跨天)
+#           - 12:00 → 今 07:00 ~ 12:00(5h)
+#           - 20:30 → 今 12:00 ~ 20:30(8.5h)
+# 统计实践:
+#   - 动态 plugin(yaegi):从 ctx.RequestedTimeDim.DateRange 拿 from/to 拼 WHERE
+#   - 静态 SQL 作 fallback(plugin 加载失败时用 1-day 默认窗口)
+#   - SELECT 阶段 RTRIM,JOIN 条件不 RTRIM(17x 性能差距,见 skill convention #2)
+#   - 引擎外层:SUM(sale_qnty) → sale_qty,MAX(inv_snapshot) 保留单值
+#   - inv_snapshot 独立查 t_im_branch_stock(LEFT JOIN),不依赖 inventory_current cube
+#     理由:跨 cube 关联目前不支持,且 inv_snapshot 跟 sale_qty 在同一 SQL 里一次性
+#     查出来比让 collect-ai 二次调用 inventory_current 更简单
+# 维护:   修改 gen.go 需重启 agent(yaegi 限制);改本 yaml 可热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: display_restock_window
+  version: 0.1.0
+  description: 陈列补货建议 - 时间窗内销量 + 当前库存快照(collect-ai restock 新版)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, restock, dynamic-plugin, time-window]
+
+spec:
+  cubes:
+    - name: display_restock_window
+      # ⭐ 动态 plugin:从 BuildContext.RequestedTimeDim.DateRange 拿 from/to
+      #   加载失败 / 文件缺失 → 自动 fallback 到下面的 sql
+      dynamic_plugin:
+        path: "F:/go/src/dynamic-plugins/display_restock_window/gen.go"
+        entry: Build
+      # fallback 静态 SQL(默认最近 1 天;主要给 plugin 加载失败时的应急)
+      sql: |
+        SELECT
+          RTRIM(s.branch_no)              AS branch_no,
+          RTRIM(s.item_no)                AS item_no,
+          RTRIM(ISNULL(i.item_name, ''))  AS item_name,
+          RTRIM(ISNULL(sup.sup_name, '')) AS supplier_name,
+          RTRIM(ISNULL((SELECT MIN(bc.item_barcode) FROM t_bd_item_barcode bc WHERE bc.item_no = s.item_no), '')) AS barcode,
+          s.oper_date,
+          s.sale_qnty,
+          ISNULL(inv.stock_qty, 0)        AS inv_snapshot
+        FROM t_rm_saleflow s
+        INNER JOIN t_bd_item_info i       ON s.item_no = i.item_no
+        LEFT JOIN t_bd_supcust_info sup   ON i.main_supcust = sup.supcust_no
+        LEFT JOIN t_im_branch_stock inv   ON s.branch_no = inv.branch_no AND s.item_no = inv.item_no
+        WHERE s.oper_date >= DATEADD(DAY, -1, GETDATE())
+      description: 时间窗内(branch,item) 销售汇总 + 当前库存快照
+      primary_key: item_no
+      measures:
+        - name: count
+          type: count
+          description: 销售笔数
+        - name: sale_qty
+          type: sum
+          sql: sale_qnty
+          description: 窗口内总销量(行级 sale_qnty 之和)
+        - name: inv_snapshot
+          type: max
+          sql: inv_snapshot
+          description: 当前库存快照(per (branch,item) 单值,MAX 保留)
+      dimensions:
+        - name: branch_no
+          sql: branch_no
+          type: string
+        - name: item_no
+          sql: item_no
+          type: string
+        - name: barcode
+          sql: barcode
+          type: string
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: supplier_name
+          sql: supplier_name
+          type: string
+        - name: oper_date
+          sql: oper_date
+          type: time
+          description: 销售时间(time dim 传 dateRange,plugin 读 from/to)
+      segments: []
