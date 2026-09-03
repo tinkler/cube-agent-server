@@ -10,8 +10,8 @@ apiVersion: cube-agent/v1
 kind: Plugin
 metadata:
   name: t_bd_item_info
-  version: 0.2.0
-  description: 商品主数据表 + 库存快照(2026-09-01 加 stock_qty 字段，供扫商品用)
+  version: 0.3.0
+  description: 商品主数据表 + 库存快照(2026-09-01 加 stock_qty,2026-09-03 加 item_clsname 供 restock 收编)
   datasource: hbpos
   owner: manual
   generated_by: skill
@@ -57,10 +57,13 @@ spec:
           t.order_man_rate,
           RTRIM(ISNULL(sup.sup_name, '')) AS supplier_name,
           RTRIM(ISNULL(sup.supcust_flag, '')) AS supcust_flag,
+          RTRIM(ISNULL(cls.item_clsname, '')) AS item_clsname,
           ISNULL((SELECT SUM(stock_qty) FROM t_im_branch_stock WHERE item_no = t.item_no), 0) AS stock_qty
         FROM t_bd_item_info t
         LEFT JOIN t_bd_supcust_info sup
           ON RTRIM(t.main_supcust) = RTRIM(sup.supcust_no)
+        LEFT JOIN t_bd_item_cls cls
+          ON RTRIM(t.item_clsno) = RTRIM(cls.item_clsno)
       description: 商品主数据表，存储商品的基本信息，如编号、名称、分类、品牌、单位等。
       primary_key: item_no
       measures:
@@ -165,6 +168,10 @@ spec:
               - name: item_clsno
                 sql: item_clsno
                 type: string
+              - name: item_clsname
+                sql: item_clsname
+                type: string
+                description: 分类名(LEFT JOIN t_bd_item_cls.item_clsname,2026-09-03 加,供 restock 收编用)
               - name: item_brand
                 sql: item_brand
                 type: string
