@@ -4,14 +4,14 @@
 # 数据源: hbpos
 # 生成:   2026-08-18T19:44:09+08:00 by AI skill v0.1
 # 业务:   用 dbo.t_bd_item_info 商品主表建 cube
-# 维护:   修改后 agent 会自动热加载
+# 维护:   修改后 agent 会自动热加载 (2026-09-03 fix 后)
 # ============================================================
 apiVersion: cube-agent/v1
 kind: Plugin
 metadata:
   name: t_bd_item_info
-  version: 0.3.0
-  description: 商品主数据表 + 库存快照(2026-09-01 加 stock_qty,2026-09-03 加 item_clsname 供 restock 收编)
+  version: 0.4.0
+  description: 商品主数据表 + 库存快照 + 分类名(2026-09-01 加 stock_qty,2026-09-03 加 item_clsname + RTRIM 所有 CHAR 字段,跟 display_restock_window 对齐)
   datasource: hbpos
   owner: manual
   generated_by: skill
@@ -31,20 +31,51 @@ spec:
       # 2026-09-01 加 stock_qty:
       #   标量子查询聚合 t_im_branch_stock.stock_qty(全门店 SUM) — 不展开行,
       #   item 行数不变(11W+),扫描依然快;SQL Server 2008 R2 兼容(子查询 + ISNULL)
+      # 2026-09-03 加 item_clsname:
+      #   LEFT JOIN t_bd_item_cls 取分类名,给 restock 收编用 (LoadItemDict)
+      # 2026-09-03 加 RTRIM 所有 CHAR 字段:
+      #   hbpos 表是 CHAR(n) 类型,SQL 没 RTRIM 会带 trailing spaces
+      #   display_restock_window 早 RTRIM,导致两 cube item_no 编码不一致
+      #   → restock.LoadItemDict 字典 key (t_bd_item_info.item_no) 跟 PG
+      #     display_suggest.item_no (display_restock_window 写入) 对不上
+      #   → clsno/clsname/unit 字段全空,前端"未分类"
+      #   修复: 所有 CHAR 字段 RTRIM,跟 display_restock_window 行为一致
       sql: |
         SELECT
-          t.item_no, t.item_subno, t.item_name, t.item_subname,
-          t.item_clsno, t.item_brand, t.item_brandname,
-          t.unit_no, t.item_size, t.product_area,
-          t.combine_sta, t.status, t.display_flag,
-          t.other1, t.other2, t.other3,
-          t.automin_flag, t.en_dis, t.direct, t.change_price,
-          t.item_supcust, t.main_supcust,
-          t.item_sup_flag, t.item_stock, t.item_counter,
+          RTRIM(t.item_no)            AS item_no,
+          RTRIM(t.item_subno)         AS item_subno,
+          t.item_name, t.item_subname,
+          RTRIM(t.item_clsno)         AS item_clsno,
+          RTRIM(t.item_brand)         AS item_brand,
+          RTRIM(t.item_brandname)     AS item_brandname,
+          RTRIM(t.unit_no)            AS unit_no,
+          t.item_size, t.product_area,
+          RTRIM(t.combine_sta)        AS combine_sta,
+          RTRIM(t.status)             AS status,
+          RTRIM(t.display_flag)       AS display_flag,
+          RTRIM(t.other1)             AS other1,
+          RTRIM(t.other2)             AS other2,
+          RTRIM(t.other3)             AS other3,
+          RTRIM(t.automin_flag)       AS automin_flag,
+          RTRIM(t.en_dis)             AS en_dis,
+          RTRIM(t.direct)             AS direct,
+          RTRIM(t.change_price)       AS change_price,
+          RTRIM(t.item_supcust)       AS item_supcust,
+          RTRIM(t.main_supcust)       AS main_supcust,
+          RTRIM(t.item_sup_flag)      AS item_sup_flag,
+          t.item_stock, t.item_counter,
           t.build_date, t.modify_date, t.stop_date,
-          t.abc, t.branch_price, t.item_rem, t.branch_no,
-          t.cost_compute, t.com_flag, t.vip_acc_flag, t.dpfm_type,
-          t.build_man, t.last_modi_man, t.om_rate_type,
+          RTRIM(t.abc)                AS abc,
+          t.branch_price,
+          RTRIM(t.item_rem)           AS item_rem,
+          RTRIM(t.branch_no)          AS branch_no,
+          RTRIM(t.cost_compute)       AS cost_compute,
+          RTRIM(t.com_flag)           AS com_flag,
+          RTRIM(t.vip_acc_flag)       AS vip_acc_flag,
+          RTRIM(t.dpfm_type)          AS dpfm_type,
+          RTRIM(t.build_man)          AS build_man,
+          RTRIM(t.last_modi_man)      AS last_modi_man,
+          RTRIM(t.om_rate_type)       AS om_rate_type,
           t.price, t.base_price, t.sale_price,
           t.num1, t.num2, t.num3,
           t.po_cycle, t.so_cycle,
