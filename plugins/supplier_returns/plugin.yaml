@@ -1,0 +1,353 @@
+# ============================================================
+# Plugin: supplier_returns
+# 用途:   HB POS v10 供应商退货单单据主表(支持查单个供应商未审核的单据)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-09-03 第 1 版(新建)
+# 业务:   t_pm_sheet_master WHERE trans_no='RO' AND sale_way='A' 是供应商退货单
+#        + LEFT JOIN t_bd_supcust_info 拿供应商名(便于前端展示)
+# 支持 AI 查:
+#   - 某供应商(supcust_no)的退货单
+#   - 某门店(branch_no)的退货单
+#   - 未审核退货单(approve_flag='0')
+#   - 按时间维度(dateRange + granularity)聚合
+# 统计实践:
+#   - 时间维度用 raw datetime(oper_date, type=time)
+#   - RTRIM 所有 CHAR 字段(CHAR(8) 尾空格是 SQL Server 经典坑)
+#   - WHERE 限制最近 1 年(3484 行 × 多年会膨胀)
+#   - 显式列(20 个常用列,主表全部展平)
+# 维护:   修改后 agent 会自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: supplier_returns
+  version: 0.1.0
+  description: HB POS v10 供应商退货单主表(RO 单,J 供应商字典)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, purchase, return, daily, time-series]
+
+spec:
+  cubes:
+    # ============================================================
+    # Cube 1: 退货单主表
+    # ============================================================
+    - name: supplier_returns
+      # denormalized view:退货单主表 + 供应商字典
+      #   trans_no = 'RO' AND sale_way = 'A' 是供应商退货单(3484 行,实测 2026-09-03)
+      #   approve_flag: 0=未审核 / 1=已审核
+      #   order_status: 0=有效 / 1=关闭 / 2=取消
+      sql: |
+        SELECT
+          m.sheet_no,
+          RTRIM(m.trans_no)        AS trans_no,
+          RTRIM(m.sale_way)        AS sale_way,
+          RTRIM(m.branch_no)       AS branch_no,
+          RTRIM(ISNULL(m.d_branch_no, ''))  AS d_branch_no,
+          RTRIM(ISNULL(m.voucher_no, ''))   AS voucher_no,
+          RTRIM(ISNULL(m.supcust_no, ''))   AS supcust_no,
+          RTRIM(ISNULL(s.sup_name, ''))     AS sup_name,
+          RTRIM(ISNULL(s.sup_man, ''))      AS sup_man,
+          RTRIM(ISNULL(s.mobile, ''))       AS sup_mobile,
+          RTRIM(ISNULL(s.sup_tel, ''))      AS sup_tel,
+          m.approve_flag,
+          m.order_status,
+          m.oper_date,
+          m.work_date,
+          m.valid_date,
+          m.pay_date,
+          ISNULL(m.sheet_amt, 0)  AS sheet_amt,
+          ISNULL(m.order_amt, 0)  AS order_amt,
+          RTRIM(ISNULL(m.order_man, ''))    AS order_man,
+          RTRIM(ISNULL(m.oper_id, ''))      AS oper_id,
+          RTRIM(ISNULL(m.confirm_man, ''))  AS confirm_man,
+          RTRIM(ISNULL(m.relate_sheet_no, '')) AS relate_sheet_no
+        FROM dbo.t_pm_sheet_master m
+        LEFT JOIN dbo.t_bd_supcust_info s
+          ON RTRIM(m.supcust_no) = RTRIM(s.supcust_no)
+        WHERE m.trans_no = 'RO'
+          AND m.sale_way = 'A'
+          AND m.oper_date >= DATEADD(YEAR, -1, GETDATE())
+      description: 供应商退货单主表(近 1 年,RO 单,J 供应商字典,支持按供应商/审核状态过滤)
+      primary_key: sheet_no
+      measures:
+        - name: count
+          type: count
+          description: 退货单笔数
+        - name: total_sheet_amt
+          type: sum
+          sql: sheet_amt
+          description: 退货总金额
+        - name: total_order_amt
+          type: sum
+          sql: order_amt
+          description: 退货订单金额
+        - name: avg_sheet_amt
+          type: avg
+          sql: sheet_amt
+          description: 退货单平均金额
+      dimensions:
+        - name: sheet_no
+          sql: sheet_no
+          type: string
+          primary_key: true
+          description: 退货单号(主键)
+        - name: trans_no
+          sql: trans_no
+          type: string
+          description: 业务类型(RO=退货)
+        - name: sale_way
+          sql: sale_way
+          type: string
+          description: 销售方式(A=主单据)
+        - name: branch_no
+          sql: branch_no
+          type: string
+          description: 门店编号
+        - name: d_branch_no
+          sql: d_branch_no
+          type: string
+          description: 对方门店
+        - name: voucher_no
+          sql: voucher_no
+          type: string
+          description: 凭证号
+        - name: supcust_no
+          sql: supcust_no
+          type: string
+          description: 供应商编号
+        - name: sup_name
+          sql: sup_name
+          type: string
+          description: 供应商名称
+        - name: sup_man
+          sql: sup_man
+          type: string
+          description: 供应商联系人
+        - name: sup_mobile
+          sql: sup_mobile
+          type: string
+          description: 供应商手机
+        - name: sup_tel
+          sql: sup_tel
+          type: string
+          description: 供应商电话
+        - name: approve_flag
+          sql: approve_flag
+          type: string
+          description: 审核标志(0=未审核 / 1=已审核)
+        - name: order_status
+          sql: order_status
+          type: string
+          description: 单据状态(0=有效 / 1=关闭 / 2=取消)
+        - name: oper_date
+          sql: oper_date
+          type: time
+          description: 制单时间(支持 dateRange + granularity)
+        - name: work_date
+          sql: work_date
+          type: time
+          description: 业务时间
+        - name: valid_date
+          sql: valid_date
+          type: time
+          description: 有效日期
+        - name: pay_date
+          sql: pay_date
+          type: time
+          description: 付款日期
+        - name: order_man
+          sql: order_man
+          type: string
+          description: 订货人
+        - name: oper_id
+          sql: oper_id
+          type: string
+          description: 制单人
+        - name: confirm_man
+          sql: confirm_man
+          type: string
+          description: 审核人
+        - name: relate_sheet_no
+          sql: relate_sheet_no
+          type: string
+          description: 关联单号
+        - name: sheet_amt
+          sql: sheet_amt
+          type: number
+          description: 单据金额
+      segments:
+        - name: unapproved
+          sql: "{CUBE}.approve_flag = '0'"
+          description: 未审核的退货单
+        - name: approved
+          sql: "{CUBE}.approve_flag = '1'"
+          description: 已审核的退货单
+        - name: valid
+          sql: "{CUBE}.order_status = '0'"
+          description: 有效单据
+        - name: cancelled
+          sql: "{CUBE}.order_status = '2'"
+          description: 已取消单据
+
+    # ============================================================
+    # Cube 2: 退货单明细(根据单据 ID 拿到商品清单)
+    # ============================================================
+    - name: supplier_return_items
+      # denormalized view:退货单明细 + 主表 + 商品主表 + 商品分类
+      #   JOIN m 保证只取 RO/A 退货单的明细
+      #   JOIN i / c 拿商品名称/分类,便于前端展示
+      #   按 sheet_no 过滤 → 拿到具体退货单的所有商品
+      sql: |
+        SELECT
+          d.flow_id,
+          d.sheet_no,
+          RTRIM(d.item_no)         AS item_no,
+          RTRIM(ISNULL(i.item_name, ''))     AS item_name,
+          RTRIM(ISNULL(i.item_clsno, ''))    AS item_clsno,
+          RTRIM(ISNULL(c.item_clsname, ''))  AS item_clsname,
+          RTRIM(ISNULL(i.item_brand, ''))    AS item_brand,
+          RTRIM(ISNULL(i.item_brandname, '')) AS item_brandname,
+          RTRIM(ISNULL(d.unit_no, ''))       AS unit_no,
+          ISNULL(d.order_qty, 0)   AS order_qty,
+          ISNULL(d.real_qty, 0)    AS real_qty,
+          ISNULL(d.large_qty, 0)   AS large_qty,
+          ISNULL(d.orgi_price, 0)  AS orgi_price,
+          ISNULL(d.valid_price, 0) AS valid_price,
+          ISNULL(d.sub_amt, 0)     AS sub_amt,
+          ISNULL(d.tax, 0)         AS tax,
+          ISNULL(d.discount, 1)    AS discount,
+          d.valid_date,
+          m.oper_date,
+          RTRIM(m.branch_no)       AS branch_no,
+          RTRIM(m.supcust_no)      AS supcust_no,
+          m.approve_flag,
+          m.order_status
+        FROM dbo.t_pm_sheet_detail d
+        JOIN dbo.t_pm_sheet_master m
+          ON d.sheet_no = m.sheet_no
+        LEFT JOIN dbo.t_bd_item_info i
+          ON RTRIM(d.item_no) = RTRIM(i.item_no)
+        LEFT JOIN dbo.t_bd_item_cls c
+          ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
+        WHERE m.trans_no = 'RO'
+          AND m.sale_way = 'A'
+          AND m.oper_date >= DATEADD(YEAR, -1, GETDATE())
+      description: 退货单明细(RO 单,J 主表+商品主表+分类,按 sheet_no 过滤拿单据商品清单)
+      primary_key: flow_id
+      measures:
+        - name: count
+          type: count
+          description: 退货商品行数
+        - name: total_real_qty
+          type: sum
+          sql: real_qty
+          description: 总退货数量
+        - name: total_sub_amt
+          type: sum
+          sql: sub_amt
+          description: 退货总金额
+        - name: avg_real_qty
+          type: avg
+          sql: real_qty
+          description: 平均退货数量
+        - name: avg_valid_price
+          type: avg
+          sql: valid_price
+          description: 平均退货单价
+      dimensions:
+        - name: flow_id
+          sql: flow_id
+          type: number
+          primary_key: true
+          description: 流水号(主键)
+        - name: sheet_no
+          sql: sheet_no
+          type: string
+          description: 退货单号(用于过滤特定单据)
+        - name: item_no
+          sql: item_no
+          type: string
+          description: 商品编号
+        - name: item_name
+          sql: item_name
+          type: string
+          description: 商品名称
+        - name: item_clsno
+          sql: item_clsno
+          type: string
+          description: 商品分类编号
+        - name: item_clsname
+          sql: item_clsname
+          type: string
+          description: 商品分类名称
+        - name: item_brand
+          sql: item_brand
+          type: string
+          description: 商品品牌编码
+        - name: item_brandname
+          sql: item_brandname
+          type: string
+          description: 商品品牌名称
+        - name: unit_no
+          sql: unit_no
+          type: string
+          description: 单位编号
+        - name: order_qty
+          sql: order_qty
+          type: number
+          description: 订货数量
+        - name: real_qty
+          sql: real_qty
+          type: number
+          description: 实际退货数量
+        - name: large_qty
+          sql: large_qty
+          type: number
+          description: 大单位数量
+        - name: orgi_price
+          sql: orgi_price
+          type: number
+          description: 原价
+        - name: valid_price
+          sql: valid_price
+          type: number
+          description: 退货单价
+        - name: sub_amt
+          sql: sub_amt
+          type: number
+          description: 退货金额(单价 × 数量)
+        - name: tax
+          sql: tax
+          type: number
+          description: 税率
+        - name: discount
+          sql: discount
+          type: number
+          description: 折扣
+        - name: valid_date
+          sql: valid_date
+          type: time
+          description: 有效日期
+        - name: oper_date
+          sql: oper_date
+          type: time
+          description: 制单时间
+        - name: branch_no
+          sql: branch_no
+          type: string
+          description: 门店编号
+        - name: supcust_no
+          sql: supcust_no
+          type: string
+          description: 供应商编号
+        - name: approve_flag
+          sql: approve_flag
+          type: string
+          description: 审核标志(0=未审核 / 1=已审核)
+        - name: order_status
+          sql: order_status
+          type: string
+          description: 单据状态
+      segments: []
