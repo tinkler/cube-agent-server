@@ -1,0 +1,113 @@
+# ============================================================
+# Plugin: promotion_active_price
+# 用途:   HB POS v10 当前生效的促销价(扫码 → 自动特价)
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-09-07 按 cube-plugin-gen skill 手写
+# 业务:   collect-ai POP 打印页用, 扫商品条码 → 查当前特价
+#        (跟 promotion_plan_7d 区别: 那个是 monitor cron 用的 COUNT, 这个是 1:1 price 查询)
+#
+# 数据来源 (introspect 验证 2026-09-07):
+#   t_pub_plan_flow 实际包含字段 (sql server 2008 r2):
+#     plan_no / plan_name / begin_date / end_date
+#     item_no (= 商品 13 位 EAN-13 barcode, 跟 /products/search 同)
+#     sale_price (= 原价) / price (= 促销价, 命名反了! 注意)
+#     branch_no (= '00|' 全部门店)
+#   关联: t_bd_item_info.item_subno = t_pub_plan_flow.item_no
+#         (item_no 是 HB 内部短码, item_subno 才是 barcode)
+#
+# 现有 promotion_plan_7d 不动 (settle-suggestion skill 在用 COUNT 监控)
+# 本 cube 专为 POP 打印设计, 暴露 sale_price/price/begin_date/end_date
+#
+# 8 条最佳实践应用:
+#   1) time dim: begin_date/end_date 用 type: time (引擎 dateRange + granularity)
+#   2) RTRIM: 所有 CHAR 字段 (item_no/plan_no/branch_no)
+#   3) pre-aggregate: pf.sale_price 跟 pf.price 都是 DECIMAL, 直接 SUM 也 OK
+#   4) denormalized: 不 JOIN, cube 自身够 (前端用 barcode 1:1 查)
+#   5) WHERE 时间窗: [today, today+7d] (POP 打印用, 不用全量历史)
+#   6) 显式列: 7 个常用字段, 不 SELECT *
+#   7) primary_key: item_no (1:1 业务键)
+#   8) description: 每个 dim/measure 都加, 给 LLM 读
+# 维护:   修改后 agent 自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: promotion_active_price
+  version: 0.1.0
+  description: HB POS v10 当前生效促销价 + 活动时间(给 POP 打印价签用,1:1 barcode 查)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, promotion, price, pop-print, 1d]
+
+spec:
+  cubes:
+    - name: promotion_active_price
+      # 当前生效窗口: [today, today+7d]
+      # RTRIM 关键 CHAR 字段 (item_no = barcode, plan_no/branch_no)
+      # 命名纠正: pf.sale_price = 原价, pf.price = 促销价 (introspect 验证)
+      # 不 JOIN t_bd_item_info (前端 barcode 已知, 直接 equals 查)
+      sql: |
+        SELECT DISTINCT
+          RTRIM(pf.item_no)        AS item_no,
+          RTRIM(pf.plan_no)        AS plan_no,
+          RTRIM(pf.branch_no)      AS branch_no,
+          ISNULL(pf.sale_price, 0) AS orig_price,
+          ISNULL(pf.price, 0)      AS promo_price,
+          pf.begin_date,
+          pf.end_date
+        FROM dbo.t_pub_plan_flow pf
+        WHERE pf.begin_date <= DATEADD(DAY, 7, CAST(GETDATE() AS DATE))
+          AND pf.end_date   >= CAST(GETDATE() AS DATE)
+          AND pf.item_no IS NOT NULL
+          AND RTRIM(pf.item_no) <> ''
+          AND ISNULL(pf.price, 0) > 0
+      description: 当前生效促销价(barcode 1:1 查,7 天内窗口)
+      primary_key: item_no
+      measures:
+        - name: count
+          type: count
+          description: 该 item 的促销记录数(多 plan 叠加时 > 1)
+        - name: min_promo_price
+          type: min
+          sql: promo_price
+          description: 最低促销价(多 plan 时取最便宜)
+        - name: max_promo_price
+          type: max
+          sql: promo_price
+          description: 最高促销价
+        - name: avg_promo_price
+          type: avg
+          sql: promo_price
+          description: 平均促销价
+      dimensions:
+        - name: item_no
+          sql: item_no
+          type: string
+          primary_key: true
+          description: 商品 13 位 EAN-13 barcode (跟 /products/search 同)
+        - name: plan_no
+          sql: plan_no
+          type: string
+          description: 促销单号(多 plan 同一 item 时, 取 min_promo_price 对应的 plan)
+        - name: branch_no
+          sql: branch_no
+          type: string
+          description: 门店号('00|' = 全部门店)
+        - name: orig_price
+          sql: orig_price
+          type: number
+          description: 原价(= pf.sale_price, 用于 POP 模板划线原价)
+        - name: promo_price
+          sql: promo_price
+          type: number
+          description: 促销价(= pf.price, POP 模板红色大字特价)
+        - name: begin_date
+          sql: begin_date
+          type: time
+          description: 活动起始日
+        - name: end_date
+          sql: end_date
+          type: time
+          description: 活动截止日
+      segments: []
