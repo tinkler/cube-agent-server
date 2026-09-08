@@ -228,6 +228,13 @@ func main() {
 		DataAdmin:    executor,  // W3:DatasourceAdmin = *engine.Executor
 		SkillAdmin:   builder,   // W4:SkillAdmin = *skill.Builder
 		PromRegistry: promReg,   // W5:/metrics 端点
+		// 2026-09-09 W1.6: collect-ai freshcheck C7 同步校验用
+		//   绕过 cube 抽象层直查思迅源库 (强制白名单防注入)
+		SourceDirect: handlers.SourceDirectDeps{
+			DataSources:    executor.DataSourceConfigs,
+			SourceRegistry: func() *source.Registry { return srcReg },
+			Logger:         logger,
+		},
 	})
 
 	// 9. HTTP server
