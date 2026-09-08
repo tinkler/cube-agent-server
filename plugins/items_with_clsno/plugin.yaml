@@ -1,0 +1,147 @@
+# ============================================================
+# Plugin: items_with_clsno
+# 用途:   freshcheck 模块用 — 商品主表 + 生鲜子类派生
+# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
+# 设计:   2026-09-09 W1.2 (collect-ai feat/freshcheck-cube)
+# 业务:   给 collect-ai freshcheck 建账用 — 筛 fresh_category 非 NULL 的 SKU
+#        自动按 item_clsname LIKE 匹配派生 fresh_category (叶菜/根茎/水产/肉类/冻品)
+#        + turnover_class (快/慢周转)
+#
+# 派生规则 (W1 静态硬编码, 后续可改 LLM 但当前不引入):
+#   - 'leaf'    : clsname LIKE '%叶菜%' OR '%青菜%' OR '%蔬菜%'
+#   - 'root'    : clsname LIKE '%根茎%' OR '%土豆%' OR '%萝卜%' OR '%洋葱%'
+#   - 'aquatic' : clsname LIKE '%水产%' OR '%鱼%' OR '%虾%' OR '%蟹%' OR '%贝%'
+#   - 'meat'    : clsname LIKE '%肉%' OR '%禽%' OR '%鸡%' OR '%鸭%' OR '%猪%' OR '%牛%' OR '%羊%'
+#   - 'frozen'  : clsname LIKE '%冻%'
+#   - NULL      : 其他 (非生鲜, freshcheck 不处理)
+# turnover_class:
+#   - 'slow' : root / frozen (干耗为主)
+#   - 'fast' : 其他 (快周转)
+#
+# 维护: agent 自动热加载
+# ============================================================
+apiVersion: cube-agent/v1
+kind: Plugin
+metadata:
+  name: items_with_clsno
+  version: 0.1.0
+  description: HB POS v10 商品主表 + 生鲜子类派生 (给 collect-ai freshcheck 建账用)
+  datasource: hbpos
+  owner: manual
+  generated_by: skill
+  tags: [hbpos, items, freshcheck, master-data]
+
+spec:
+  cubes:
+    - name: items_with_clsno
+      # denormalized: t_bd_item_info + t_bd_item_cls LEFT JOIN
+      # 派生 fresh_category (静态 CASE WHEN, 5 子类 + 1 NULL)
+      # 派生 turnover_class (root/frozen=slow, 其他=fast)
+      # 含 stock_qty Scalar Subquery 聚合库存 (跟 t_bd_item_info 复用, 但独立 cube 避免 join 链太深)
+      sql: |
+        SELECT
+          RTRIM(i.item_no)         AS item_no,
+          RTRIM(i.item_name)       AS item_name,
+          RTRIM(i.item_clsno)      AS item_clsno,
+          RTRIM(c.item_clsname)    AS item_clsname,
+          RTRIM(i.item_brand)      AS item_brand,
+          RTRIM(i.item_brandname)  AS item_brandname,
+          RTRIM(i.main_supcust)    AS main_supcust,
+          RTRIM(i.item_unit)       AS unit,
+          i.item_price,
+          -- 派生: 生鲜子类 (CASE WHEN LIKE 静态规则)
+          CASE
+            WHEN c.item_clsname LIKE '%叶菜%' OR c.item_clsname LIKE '%青菜%' OR c.item_clsname LIKE '%蔬菜%' THEN 'leaf'
+            WHEN c.item_clsname LIKE '%根茎%' OR c.item_clsname LIKE '%土豆%' OR c.item_clsname LIKE '%萝卜%' OR c.item_clsname LIKE '%洋葱%' OR c.item_clsname LIKE '%姜%' OR c.item_clsname LIKE '%蒜%' THEN 'root'
+            WHEN c.item_clsname LIKE '%水产%' OR c.item_clsname LIKE '%鱼%' OR c.item_clsname LIKE '%虾%' OR c.item_clsname LIKE '%蟹%' OR c.item_clsname LIKE '%贝%' THEN 'aquatic'
+            WHEN c.item_clsname LIKE '%肉%' OR c.item_clsname LIKE '%禽%' OR c.item_clsname LIKE '%鸡%' OR c.item_clsname LIKE '%鸭%' OR c.item_clsname LIKE '%猪%' OR c.item_clsname LIKE '%牛%' OR c.item_clsname LIKE '%羊%' THEN 'meat'
+            WHEN c.item_clsname LIKE '%冻%' THEN 'frozen'
+            ELSE NULL
+          END AS fresh_category,
+          -- 派生: 快/慢周转 (root/frozen = 慢, 其他 = 快)
+          CASE
+            WHEN c.item_clsname LIKE '%根茎%' OR c.item_clsname LIKE '%冻%' THEN 'slow'
+            ELSE 'fast'
+          END AS turnover_class,
+          -- 库存 Scalar Subquery (跟 t_bd_item_info 一样, 独立 cube 不依赖)
+          ISNULL(
+            (SELECT SUM(stock_qty) FROM dbo.t_im_branch_stock WHERE item_no = i.item_no),
+            0
+          ) AS stock_qty
+        FROM dbo.t_bd_item_info i
+        LEFT JOIN dbo.t_bd_item_cls c ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
+        WHERE i.item_no IS NOT NULL
+          AND i.item_no <> ''
+      description: 商品主表(11W 行全集),派生生鲜子类(fresh_category) + 快/慢周转(turnover_class) + 库存聚合(stock_qty)。给 collect-ai freshcheck 建账筛 SKU 用。
+      primary_key: item_no
+      measures:
+        - name: count
+          type: count
+          description: 商品总数
+        - name: stock_qty
+          type: sum
+          sql: stock_qty
+          description: 库存总量 (Scalar Subquery SUM)
+        - name: fresh_count
+          type: count
+          sql: CASE WHEN fresh_category IS NOT NULL THEN 1 END
+          description: 生鲜 SKU 数 (fresh_category 非 NULL)
+        - name: leaf_count
+          type: count
+          sql: CASE WHEN fresh_category = 'leaf' THEN 1 END
+          description: 叶菜 SKU 数
+        - name: root_count
+          type: count
+          sql: CASE WHEN fresh_category = 'root' THEN 1 END
+          description: 根茎 SKU 数
+        - name: aquatic_count
+          type: count
+          sql: CASE WHEN fresh_category = 'aquatic' THEN 1 END
+          description: 水产 SKU 数
+        - name: meat_count
+          type: count
+          sql: CASE WHEN fresh_category = 'meat' THEN 1 END
+          description: 肉类 SKU 数
+        - name: frozen_count
+          type: count
+          sql: CASE WHEN fresh_category = 'frozen' THEN 1 END
+          description: 冻品 SKU 数
+        - name: slow_count
+          type: count
+          sql: CASE WHEN turnover_class = 'slow' THEN 1 END
+          description: 慢周转 SKU 数 (root/frozen)
+      dimensions:
+        - name: item_no
+          sql: item_no
+          type: string
+          primary_key: true
+        - name: item_name
+          sql: item_name
+          type: string
+        - name: item_clsno
+          sql: item_clsno
+          type: string
+        - name: item_clsname
+          sql: item_clsname
+          type: string
+        - name: item_brand
+          sql: item_brand
+          type: string
+        - name: item_brandname
+          sql: item_brandname
+          type: string
+        - name: main_supcust
+          sql: main_supcust
+          type: string
+        - name: unit
+          sql: unit
+          type: string
+        - name: fresh_category
+          sql: fresh_category
+          type: string
+          description: 生鲜子类 (leaf/root/aquatic/meat/frozen, NULL=非生鲜)
+        - name: turnover_class
+          sql: turnover_class
+          type: string
+          description: 快/慢周转 (fast/slow)
+      segments: []
