@@ -112,7 +112,26 @@ spec:
         - name: oper_date
           sql: oper_date
           type: time
-          description: 销售时间 (支持 dateRange + granularity)
+        - name: sale_qnty
+          sql: sale_qnty
+          type: number
+          description: 单笔销量 (明细行, collect-ai 按 item_no 聚合用)
+        - name: sale_money
+          sql: sale_money
+          type: number
+          description: 单笔销售额 (明细行)
+        - name: in_price
+          sql: in_price
+          type: number
+          description: 单笔进价 (明细行)
+        - name: total_cost
+          sql: total_cost
+          type: number
+          description: 单笔成本 (明细行)
+        - name: gross_profit
+          sql: gross_profit
+          type: number
+          description: 单笔毛利 (明细行)
         - name: branch_no
           sql: branch_no
           type: string
