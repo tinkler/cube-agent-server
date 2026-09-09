@@ -27,7 +27,6 @@ type RouterConfig struct {
 	DataAdmin     handlers.DatasourceAdmin // W3 新增,用于 /admin/datasources
 	SkillAdmin    handlers.SkillAdmin      // W4 新增,用于 /admin/skill/*
 	PromRegistry  *prometheus.Registry    // W5 新增,可选,接 /metrics
-	SourceDirect  handlers.SourceDirectDeps // 2026-09-09 W1.6, 用于 /admin/source-direct (collect-ai freshcheck C7 用)
 }
 
 // NewRouter 构造 gin.Engine
@@ -91,13 +90,6 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 		admin.POST("/skill/step/generate", handlers.SkillStep5(cfg.SkillAdmin))
 		admin.POST("/skill/step/validate", handlers.SkillStep6(cfg.SkillAdmin))
 		admin.POST("/skill/step/publish", handlers.SkillStep7(cfg.SkillAdmin))
-	}
-
-	// 2026-09-09 W1.6: collect-ai freshcheck C7 同步校验用
-	//   直查思迅源库做 aggregate (绕过 cube 抽象层)
-	//   强制白名单 (table/column/op) 防 SQL 注入
-	if cfg.SourceDirect.SourceRegistry != nil {
-		admin.POST("/source-direct", handlers.SourceDirect(cfg.SourceDirect))
 	}
 
 	return r
