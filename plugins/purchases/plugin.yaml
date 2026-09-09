@@ -17,8 +17,8 @@ apiVersion: cube-agent/v1
 kind: Plugin
 metadata:
   name: purchases
-  version: 0.2.0
-  description: HB POS v10 采购入库流水(J 商品主表:分类/供应商/品牌)
+  version: 0.3.0
+  description: HB POS v10 采购入库流水 (t_im_flow + 商品主表)
   datasource: hbpos
   owner: manual
   generated_by: skill
@@ -119,4 +119,33 @@ spec:
         - name: cost_price
           sql: cost_price
           type: number
+          description: 成本价 (明细行, collect-ai 按 item_no 聚合用)
+        - name: real_qty
+          sql: real_qty
+          type: number
+          description: 实际入库量 (明细行)
+        - name: sheet_amt
+          sql: sheet_amt
+          type: number
+          description: 单据金额 (明细行)
+        - name: total_cost
+          sql: total_cost
+          type: number
+          description: 总成本 = real_qty × cost_price (明细行)
+        - name: voucher_no
+          sql: voucher_no
+          type: string
+          description: 入库单据号 (明细行)
+        - name: cost_difference
+          sql: cost_difference
+          type: number
+          description: 成本差额 (明细行, 部分业务无此字段可能 NULL)
+        - name: purchase_tax
+          sql: purchase_tax
+          type: number
+          description: 采购税额 (明细行)
+        - name: sale_tax
+          sql: sale_tax
+          type: number
+          description: 销售税额 (明细行)
       segments: []
