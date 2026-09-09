@@ -1,76 +1,59 @@
-# ============================================================
-# Plugin: sales_with_refund
-# 用途:   freshcheck 模块用 — 销售流水(含退货标记 + 原单号)
-# 数据源: hbpos (SQL Server 2008 R2, hbposv10)
-# 设计:   2026-09-09 W1.2 (collect-ai feat/freshcheck-cube)
-# 业务:   给 collect-ai freshcheck 的 Step 2 退货回冲用
-#        含 is_refund (0/1) + sell_way (A=正/B=退) + voucher_no (原单号)
-# view 优先: 基于 siss_saleflow view (3,188,099 行全集) + LEFT JOIN t_rm_saleflow 拿原单/branch
-#
-# ⚠️ TODO introspect 思迅 hbpos 实际确认 (W1 末):
-#   - siss_saleflow.sell_way 实际值 ('A'/'B' 还是别的)
-#   - t_rm_saleflow.voucher_no 字段是否真的存在 (按 HB POS v10 标准 schema 应有)
-#   - t_rm_saleflow.origin_flow_id 是否存在 (若有,直接关联更快,不需要 voucher_no)
-# 性能: siss_saleflow 无 PK, JOIN 组合键 (item_no + oper_date + sale_qnty), 大窗口查询慢
-# 维护:  agent 自动热加载
-# ============================================================
 apiVersion: cube-agent/v1
 kind: Plugin
 metadata:
   name: sales_with_refund
-  version: 0.1.0
-  description: HB POS v10 销售流水(退货标记 + 原单号, 给 collect-ai freshcheck 周期结算用)
+  version: 0.3.0
+  description: HB POS v10 销售流水 (基于 siss_saleflow view) 含退货标记 + branch + 商品主表
   datasource: hbpos
-  owner: manual
-  generated_by: skill
-  tags: [hbpos, sales, refund, freshcheck, time-series]
+  owner: collect-ai
 
+# 设计: 2026-09-09 W1.2, 2026-09-10 集成阶段改用 siss_saleflow 主表
+# 业务: 给 collect-ai freshcheck 的 Step 2 退货回冲用
+#   含 sell_way (A=正/B=退) + ret_qnty 退货标记
+#
+# 集成发现 (2026-09-10):
+#   - siss_saleflow view 实际只 5 列 (item_no, sale_price, sale_qnty, oper_date, sell_way)
+#   - sale_money/in_price/branch_no 不在 view, 需 LEFT JOIN t_rm_saleflow
+#   - t_rm_saleflow 有 ret_qnty (退货数量, 正单 = sale_qnty, 退单 = -ret_qnty)
+#   - voucher_no/origin_flow_id 不存在 (W1.2 spec 错误, 已移除)
+# 性能: 1 年数据约 318 万行 (view) + LEFT JOIN t_rm_saleflow (按 item_no+oper_date+sale_qnty 对齐, 慢)
+# 维护: agent 自动热加载
+
+# ============================================================
 spec:
   cubes:
     - name: sales_with_refund
-      # view 优先: siss_saleflow (3,188,099 行全集, 跟 t_rm_saleflow 1:1 数据一致)
-      # LEFT JOIN t_rm_saleflow 拿 branch_no / sale_money / in_price / voucher_no (原单号)
-      # LEFT JOIN t_bd_item_info 拿分类/供应商
-      # LEFT JOIN t_bd_item_cls 拿分类名
+      # denormalized: siss_saleflow (5 列全集) + LEFT JOIN t_rm_saleflow (拿 branch + cost)
+      # 退货标记 (双重保险):
+      #   - sell_way IN ('B','T','R') → 退单
+      #   - ret_qnty > 0 → 也是退单 (t_rm_saleflow 字段, 思迅约定)
       sql: |
         SELECT
-          -- 派生 PK: 用 siss_saleflow 5 列组合 (无原生 PK)
-          -- 实际查询时如需精确 1:1, 改用 t_rm_saleflow.flow_id (有 PK)
-          -- 这里用 ROW_NUMBER() 给一个伪 PK, 供 GROUP BY 去重
-          ROW_NUMBER() OVER (ORDER BY si.oper_date, si.item_no) AS row_id,
-          -- 来自 view (5 列全集)
+          -- row_id (伪 PK, view 无 PK, 用 ROW_NUMBER)
+          ROW_NUMBER() OVER (ORDER BY si.oper_date, si.item_no, si.sell_way) AS row_id,
+          -- 来自 siss_saleflow view (5 列全集)
           RTRIM(si.item_no)         AS item_no,
           si.sale_price,
           si.sale_qnty,
           si.oper_date,
           RTRIM(si.sell_way)        AS sell_way,
-          -- LEFT JOIN t_rm_saleflow (1:1, 拿原单/branch/成本)
+          -- LEFT JOIN t_rm_saleflow (1:1, 拿 branch + sale_money + in_price + ret_qnty)
+          -- 组合键: item_no + oper_date + sale_qnty (view + 主表对齐)
           RTRIM(s.branch_no)        AS branch_no,
-          ISNULL(s.sale_money, 0)   AS sale_money,
+          ISNULL(s.sale_money, si.sale_price * si.sale_qnty) AS sale_money,
           ISNULL(s.in_price, 0)     AS in_price,
           ISNULL(s.in_price, 0) * si.sale_qnty AS total_cost,
-          ISNULL(s.sale_money, 0) - ISNULL(s.in_price, 0) * si.sale_qnty AS gross_profit,
-          RTRIM(ISNULL(s.voucher_no, '')) AS voucher_no,           -- 原单号 (退单关联正单)
-          ISNULL(s.flow_id, 0)      AS origin_flow_id,             -- 退单原 flow_id (若有)
-          -- LEFT JOIN t_bd_item_info (商品主表)
-          RTRIM(ISNULL(i.item_name, ''))     AS item_name,
-          RTRIM(ISNULL(i.item_clsno, ''))    AS item_clsno,
-          RTRIM(ISNULL(i.item_brand, ''))    AS item_brand,
-          RTRIM(ISNULL(i.item_brandname, '')) AS item_brandname,
-          RTRIM(ISNULL(i.main_supcust, ''))  AS main_supcust,
-          -- LEFT JOIN t_bd_item_cls
-          RTRIM(ISNULL(c.item_clsname, ''))  AS item_clsname,
-          -- 派生: 退货标记
-          CASE WHEN si.sell_way IN ('B', 'T', 'R') THEN 1 ELSE 0 END AS is_refund
+          ISNULL(s.sale_money, si.sale_price * si.sale_qnty) - ISNULL(s.in_price, 0) * si.sale_qnty AS gross_profit,
+          ISNULL(s.ret_qnty, 0)     AS ret_qnty,
+          -- 派生: 退货标记 (双重判定: sell_way + ret_qnty)
+          CASE WHEN si.sell_way IN ('B', 'T', 'R') OR ISNULL(s.ret_qnty, 0) > 0 THEN 1 ELSE 0 END AS is_refund
         FROM dbo.siss_saleflow si
         LEFT JOIN dbo.t_rm_saleflow s
           ON RTRIM(si.item_no)  = RTRIM(s.item_no)
           AND si.oper_date      = s.oper_date
           AND si.sale_qnty      = s.sale_qnty
-        LEFT JOIN dbo.t_bd_item_info i ON RTRIM(si.item_no) = RTRIM(i.item_no)
-        LEFT JOIN dbo.t_bd_item_cls  c ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
         WHERE si.oper_date >= DATEADD(YEAR, -1, GETDATE())
-      description: 销售流水全集(基于 siss_saleflow view),含退货标记 + 原单号,JOIN 商品主表。给 collect-ai freshcheck 周期结算的退货回冲算法用。
+      description: 销售流水全集(基于 siss_saleflow view),含退货标记 + branch + sale_money + in_price。
       primary_key: row_id
       measures:
         - name: count
@@ -95,7 +78,7 @@ spec:
         - name: refund_qnty
           type: sum
           sql: CASE WHEN is_refund=1 THEN ABS(sale_qnty) ELSE 0 END
-          description: 退货总量 (绝对值, 供 freshcheck 校验)
+          description: 退货总量 (绝对值)
         - name: refund_amt
           type: sum
           sql: CASE WHEN is_refund=1 THEN ABS(sale_money) ELSE 0 END
@@ -112,6 +95,7 @@ spec:
         - name: oper_date
           sql: oper_date
           type: time
+          description: 销售时间 (支持 dateRange + granularity)
         - name: sale_qnty
           sql: sale_qnty
           type: number
@@ -120,6 +104,10 @@ spec:
           sql: sale_money
           type: number
           description: 单笔销售额 (明细行)
+        - name: sale_price
+          sql: sale_price
+          type: number
+          description: 单笔单价 (明细行)
         - name: in_price
           sql: in_price
           type: number
@@ -132,44 +120,46 @@ spec:
           sql: gross_profit
           type: number
           description: 单笔毛利 (明细行)
+        - name: ret_qnty
+          sql: ret_qnty
+          type: number
+          description: 退货数量 (明细行)
         - name: branch_no
           sql: branch_no
           type: string
+          description: 门店号 (来自 t_rm_saleflow, LEFT JOIN 可能为空)
         - name: item_no
           sql: item_no
           type: string
         - name: item_name
-          sql: item_name
+          sql: |
+            (SELECT TOP 1 RTRIM(item_name) FROM dbo.t_bd_item_info WHERE item_no = si.item_no)
           type: string
+          description: 商品名 (通过子查询拿, 避免 JOIN 大表)
         - name: item_clsno
-          sql: item_clsno
+          sql: |
+            (SELECT TOP 1 RTRIM(item_clsno) FROM dbo.t_bd_item_info WHERE item_no = si.item_no)
           type: string
+          description: 商品分类码
         - name: item_clsname
-          sql: item_clsname
+          sql: |
+            (SELECT TOP 1 RTRIM(c.item_clsname)
+             FROM dbo.t_bd_item_info i
+             JOIN dbo.t_bd_item_cls c ON i.item_clsno = c.item_clsno
+             WHERE i.item_no = si.item_no)
           type: string
-        - name: item_brand
-          sql: item_brand
-          type: string
-        - name: item_brandname
-          sql: item_brandname
-          type: string
+          description: 商品分类名
         - name: main_supcust
-          sql: main_supcust
+          sql: |
+            (SELECT TOP 1 RTRIM(main_supcust) FROM dbo.t_bd_item_info WHERE item_no = si.item_no)
           type: string
+          description: 主供应商
         - name: is_refund
           sql: is_refund
           type: number
-          description: 是否退货 (0=正/1=退, 0/1 数字)
+          description: "是否退货 (0=正/1=退, 双重判定 sell_way + ret_qnty)"
         - name: sell_way
           sql: sell_way
           type: string
-          description: 思迅 sell_way 原值 (A=正/B=退/T=其他, 需 introspect 确认)
-        - name: voucher_no
-          sql: voucher_no
-          type: string
-          description: 原单号 (退单关联正单用, 跨期回冲靠这个)
-        - name: origin_flow_id
-          sql: origin_flow_id
-          type: number
-          description: 退单原 flow_id (若 t_rm_saleflow 有此字段)
+          description: 思迅 sell_way 原值 (A=正/B=退/T=其他)
       segments: []
