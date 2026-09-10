@@ -46,12 +46,19 @@ spec:
           ISNULL(s.sale_money, si.sale_price * si.sale_qnty) - ISNULL(s.in_price, 0) * si.sale_qnty AS gross_profit,
           ISNULL(s.ret_qnty, 0)     AS ret_qnty,
           -- 派生: 退货标记 (双重判定: sell_way + ret_qnty)
-          CASE WHEN si.sell_way IN ('B', 'T', 'R') OR ISNULL(s.ret_qnty, 0) > 0 THEN 1 ELSE 0 END AS is_refund
+          CASE WHEN si.sell_way IN ('B', 'T', 'R') OR ISNULL(s.ret_qnty, 0) > 0 THEN 1 ELSE 0 END AS is_refund,
+          -- 商品主表 (LEFT JOIN 一次性带过来, 避免子查询太长超 MSSQL 128 字符)
+          RTRIM(ISNULL(i.item_name,    '')) AS item_name,
+          RTRIM(ISNULL(i.item_clsno,   '')) AS item_clsno,
+          RTRIM(ISNULL(c.item_clsname, '')) AS item_clsname,
+          RTRIM(ISNULL(i.main_supcust, '')) AS main_supcust
         FROM dbo.siss_saleflow si
         LEFT JOIN dbo.t_rm_saleflow s
           ON RTRIM(si.item_no)  = RTRIM(s.item_no)
           AND si.oper_date      = s.oper_date
           AND si.sale_qnty      = s.sale_qnty
+        LEFT JOIN dbo.t_bd_item_info i ON RTRIM(si.item_no) = RTRIM(i.item_no)
+        LEFT JOIN dbo.t_bd_item_cls  c ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
         WHERE si.oper_date >= DATEADD(YEAR, -1, GETDATE())
       description: 销售流水全集(基于 siss_saleflow view),含退货标记 + branch + sale_money + in_price。
       primary_key: row_id
@@ -132,28 +139,21 @@ spec:
           sql: item_no
           type: string
         - name: item_name
-          sql: |
-            (SELECT TOP 1 RTRIM(item_name) FROM dbo.t_bd_item_info WHERE item_no = si.item_no)
+          sql: item_name
           type: string
-          description: 商品名 (通过子查询拿, 避免 JOIN 大表)
+          description: 商品名 (来自 LEFT JOIN t_bd_item_info)
         - name: item_clsno
-          sql: |
-            (SELECT TOP 1 RTRIM(item_clsno) FROM dbo.t_bd_item_info WHERE item_no = si.item_no)
+          sql: item_clsno
           type: string
-          description: 商品分类码
+          description: 商品分类码 (来自 LEFT JOIN t_bd_item_info)
         - name: item_clsname
-          sql: |
-            (SELECT TOP 1 RTRIM(c.item_clsname)
-             FROM dbo.t_bd_item_info i
-             JOIN dbo.t_bd_item_cls c ON i.item_clsno = c.item_clsno
-             WHERE i.item_no = si.item_no)
+          sql: item_clsname
           type: string
-          description: 商品分类名
+          description: 商品分类名 (来自 LEFT JOIN t_bd_item_cls)
         - name: main_supcust
-          sql: |
-            (SELECT TOP 1 RTRIM(main_supcust) FROM dbo.t_bd_item_info WHERE item_no = si.item_no)
+          sql: main_supcust
           type: string
-          description: 主供应商
+          description: 主供应商 (来自 LEFT JOIN t_bd_item_info)
         - name: is_refund
           sql: is_refund
           type: number

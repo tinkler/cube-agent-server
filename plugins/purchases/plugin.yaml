@@ -47,18 +47,22 @@ spec:
           RTRIM(f.supcust_no)      AS supcust_no,
           f.real_qty,
           f.price,
-          f.cost_price,
-          f.real_qty * f.cost_price AS total_cost,
+          f.cost_price, -- 保留原值, 避免下游 real_qty*NULL/0 出错
+          ISNULL(f.real_qty * f.cost_price, 0) AS total_cost, -- 2026-09-10: 部分入库单 cost_price NULL, ISNULL 兜底为 0 让 cube mssql scan 不挂
           f.sheet_amt,
           ISNULL(f.purchase_tax, 0) AS purchase_tax,
           f.sale_tax,
           f.cost_difference
         FROM dbo.t_im_flow f
-        LEFT JOIN dbo.t_bd_item_info i ON RTRIM(f.item_no) = RTRIM(i.item_no)
-        LEFT JOIN dbo.t_bd_item_cls  c ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
+        -- 2026-09-10: 集成 A 性能修复
+        --   原: LEFT JOIN ... ON RTRIM(f.item_no) = RTRIM(i.item_no)  → RTRIM 让 char(20) JOIN 用不上 PK 索引, 31万行 × 11W 商品主表 = 25s+
+        --   改: INNER JOIN + 裸字段比较 (t_im_flow.item_no + t_bd_item_info.item_no 都是 char(20), SQL Server collation 自动 pad space, 无需 RTRIM)
+        --   INNER JOIN: freshcheck 只统计已盘点的 SKU (必然在 t_bd_item_info)
+        --   无 1 年硬限制: 时间窗由 collect-ai timeDimensions dateRange 控制
+        INNER JOIN dbo.t_bd_item_info i ON f.item_no = i.item_no
+        LEFT  JOIN dbo.t_bd_item_cls  c ON i.item_clsno = c.item_clsno
         WHERE f.sale_way = 'A'
-          AND f.oper_date >= DATEADD(YEAR, -1, GETDATE())
-      description: 采购入库流水(近 1 年,A 单,JOIN 商品主表,带真实成本)
+      description: 采购入库流水 (A 单, INNER JOIN 商品主表走 PK 索引, 时间窗由调用方 dateRange 控制)
       primary_key: flow_id
       measures:
         - name: count
