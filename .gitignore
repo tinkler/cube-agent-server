@@ -51,3 +51,4 @@ tmp_*.json
 
 
 dynamic-plugins/
+/scripts/tmp
