@@ -47,8 +47,11 @@ spec:
           RTRIM(f.supcust_no)      AS supcust_no,
           f.real_qty,
           f.price,
-          f.cost_price, -- 保留原值, 避免下游 real_qty*NULL/0 出错
-          ISNULL(f.real_qty * f.cost_price, 0) AS total_cost, -- 2026-09-10: 部分入库单 cost_price NULL, ISNULL 兜底为 0 让 cube mssql scan 不挂
+          f.cost_price,
+          -- 2026-09-10: 部分入库行 cost_price NULL, 之前 ISNULL(f.cost_price, 0) AS cost_price
+          --   让 total_cost 永为 0 (因为 f.cost_price 已经是 0, 0 * real_qty = 0)
+          -- 修: cost_price 保留原值 (下游 AVG/明细需要), total_cost 用 ISNULL(real_qty*cost_price, 0) 单独兜底
+          ISNULL(f.real_qty * f.cost_price, 0) AS total_cost,
           f.sheet_amt,
           ISNULL(f.purchase_tax, 0) AS purchase_tax,
           f.sale_tax,

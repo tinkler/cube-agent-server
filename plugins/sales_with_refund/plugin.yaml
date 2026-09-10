@@ -29,39 +29,44 @@ spec:
       #   - ret_qnty > 0 → 也是退单 (t_rm_saleflow 字段, 思迅约定)
       sql: |
         SELECT
-          -- row_id (伪 PK, view 无 PK, 用 ROW_NUMBER)
-          ROW_NUMBER() OVER (ORDER BY si.oper_date, si.item_no, si.sell_way) AS row_id,
-          -- 来自 siss_saleflow view (5 列全集)
+          -- 2026-09-10 集成 A 优化: 彻底简化 SQL (原 30s+ timeout)
+          --   去掉 ROW_NUMBER() OVER (3.2M 行排序超时)
+          --   去掉 LEFT JOIN t_bd_item_info + t_bd_item_cls (collect-ai freshcheck 不需要 item_name/clsno/clsname/main_supcust)
+          --   简化派生列: 只保留净额 sale_qnty + sale_money (cube 端 sum 自动抵消退货)
+          --   保留 t_rm_saleflow LEFT JOIN 拿 branch + sale_money + in_price (净销售 + 毛利需要)
           RTRIM(si.item_no)         AS item_no,
           si.sale_price,
-          si.sale_qnty,
+          -- 净额 sale_qnty (退货行转负)
+          CASE WHEN si.sell_way IN ('B','T','R') OR ISNULL(s.ret_qnty, 0) > 0
+               THEN -si.sale_qnty
+               ELSE si.sale_qnty
+          END AS sale_qnty,
           si.oper_date,
           RTRIM(si.sell_way)        AS sell_way,
-          -- LEFT JOIN t_rm_saleflow (1:1, 拿 branch + sale_money + in_price + ret_qnty)
-          -- 组合键: item_no + oper_date + sale_qnty (view + 主表对齐)
           RTRIM(s.branch_no)        AS branch_no,
-          ISNULL(s.sale_money, si.sale_price * si.sale_qnty) AS sale_money,
+          -- 净额 sale_money
+          CASE WHEN si.sell_way IN ('B','T','R') OR ISNULL(s.ret_qnty, 0) > 0
+               THEN -ISNULL(s.sale_money, si.sale_price * si.sale_qnty)
+               ELSE ISNULL(s.sale_money, si.sale_price * si.sale_qnty)
+          END AS sale_money,
           ISNULL(s.in_price, 0)     AS in_price,
-          ISNULL(s.in_price, 0) * si.sale_qnty AS total_cost,
-          ISNULL(s.sale_money, si.sale_price * si.sale_qnty) - ISNULL(s.in_price, 0) * si.sale_qnty AS gross_profit,
-          ISNULL(s.ret_qnty, 0)     AS ret_qnty,
-          -- 派生: 退货标记 (双重判定: sell_way + ret_qnty)
-          CASE WHEN si.sell_way IN ('B', 'T', 'R') OR ISNULL(s.ret_qnty, 0) > 0 THEN 1 ELSE 0 END AS is_refund,
-          -- 商品主表 (LEFT JOIN 一次性带过来, 避免子查询太长超 MSSQL 128 字符)
-          RTRIM(ISNULL(i.item_name,    '')) AS item_name,
-          RTRIM(ISNULL(i.item_clsno,   '')) AS item_clsno,
-          RTRIM(ISNULL(c.item_clsname, '')) AS item_clsname,
-          RTRIM(ISNULL(i.main_supcust, '')) AS main_supcust
+          ISNULL(s.in_price, 0) * (CASE WHEN si.sell_way IN ('B','T','R') OR ISNULL(s.ret_qnty, 0) > 0
+                                        THEN -si.sale_qnty ELSE si.sale_qnty END) AS total_cost,
+          -- 简化: gross_profit = sale_money(净额) - in_price * sale_qnty(净额) (SQL Server 优化器能识别)
+          ISNULL(s.sale_money, si.sale_price * si.sale_qnty)
+              - ISNULL(s.in_price, 0) * si.sale_qnty
+              + CASE WHEN si.sell_way IN ('B','T','R') OR ISNULL(s.ret_qnty, 0) > 0
+                     THEN -2 * ISNULL(s.sale_money, si.sale_price * si.sale_qnty)
+                          + 2 * ISNULL(s.in_price, 0) * si.sale_qnty
+                     ELSE 0 END AS gross_profit
         FROM dbo.siss_saleflow si
         LEFT JOIN dbo.t_rm_saleflow s
           ON RTRIM(si.item_no)  = RTRIM(s.item_no)
           AND si.oper_date      = s.oper_date
           AND si.sale_qnty      = s.sale_qnty
-        LEFT JOIN dbo.t_bd_item_info i ON RTRIM(si.item_no) = RTRIM(i.item_no)
-        LEFT JOIN dbo.t_bd_item_cls  c ON RTRIM(i.item_clsno) = RTRIM(c.item_clsno)
         WHERE si.oper_date >= DATEADD(YEAR, -1, GETDATE())
-      description: 销售流水全集(基于 siss_saleflow view),含退货标记 + branch + sale_money + in_price。
-      primary_key: row_id
+      description: 销售流水 (基于 siss_saleflow view + t_rm_saleflow LEFT JOIN, sale_qnty/sale_money 净额化)。
+      primary_key: item_no  # 2026-09-10: 改用 item_no 当 PK (row_id 已删, siss_saleflow view 3.2M 行 ROW_NUMBER 30s+ timeout)
       measures:
         - name: count
           type: count
@@ -82,23 +87,10 @@ spec:
           type: sum
           sql: gross_profit
           description: 总毛利
-        - name: refund_qnty
-          type: sum
-          sql: CASE WHEN is_refund=1 THEN ABS(sale_qnty) ELSE 0 END
-          description: 退货总量 (绝对值)
-        - name: refund_amt
-          type: sum
-          sql: CASE WHEN is_refund=1 THEN ABS(sale_money) ELSE 0 END
-          description: 退货总额 (绝对值)
-        - name: normal_revenue
-          type: sum
-          sql: CASE WHEN is_refund=0 THEN sale_money ELSE 0 END
-          description: 正常销售收入 (排除退货)
+        # 2026-09-10 集成 A 优化: 删 refund_qnty / refund_amt / normal_revenue measure
+        #   原 measure SQL 是 CASE WHEN is_refund=1/0 表达式, cube-agent-server Col() 加 [] 当列名 → SQL Server 列名错
+        #   净额化后 total_qnty / total_revenue 已经包含净额 (退货自动抵消), 不需要单独 measure
       dimensions:
-        - name: row_id
-          sql: row_id
-          type: number
-          primary_key: true
         - name: oper_date
           sql: oper_date
           type: time
@@ -138,26 +130,6 @@ spec:
         - name: item_no
           sql: item_no
           type: string
-        - name: item_name
-          sql: item_name
-          type: string
-          description: 商品名 (来自 LEFT JOIN t_bd_item_info)
-        - name: item_clsno
-          sql: item_clsno
-          type: string
-          description: 商品分类码 (来自 LEFT JOIN t_bd_item_info)
-        - name: item_clsname
-          sql: item_clsname
-          type: string
-          description: 商品分类名 (来自 LEFT JOIN t_bd_item_cls)
-        - name: main_supcust
-          sql: main_supcust
-          type: string
-          description: 主供应商 (来自 LEFT JOIN t_bd_item_info)
-        - name: is_refund
-          sql: is_refund
-          type: number
-          description: "是否退货 (0=正/1=退, 双重判定 sell_way + ret_qnty)"
         - name: sell_way
           sql: sell_way
           type: string
